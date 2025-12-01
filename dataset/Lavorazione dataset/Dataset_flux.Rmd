@@ -1,0 +1,127 @@
+---
+title: "Dataset_heat_flux"
+author: "Leo"
+date: "2025-11-24"
+output: html_document
+---
+
+```{r caricamento dataset flux, message=FALSE, warning=FALSE}
+# --- 1. Caricamento delle librerie ---
+library(terra)
+library(tidyverse)
+library(lubridate)
+
+# --- 2. Importazione del File ---
+nome_file <- "raw_flux_31052022_31052023.nc"
+r <- rast(nome_file)
+
+# Controllo: stampiamo i nomi per verificare che inizino con rsntds o hfds
+print(names(r)[1:5]) 
+
+# --- 3. Ritaglio Area (ROI) ---
+# Stessa area geografica degli altri dataset
+roi <- ext(12, 14, 44, 46) 
+r_crop <- crop(r, roi)
+
+# --- 4. Conversione in Data Frame ---
+df_wide <- as.data.frame(r_crop, xy = TRUE, na.rm = TRUE)
+
+# --- 5. Pulizia Preventiva (Selezione variabili Flux) ---
+# Selezioniamo x, y e tutto ciò che inizia con "rsntds" o "hfds"
+df_wide_filtered <- df_wide %>%
+  select(x, y, matches("^rsntds|^hfds"))
+
+# --- 6. Trasformazione in Formato LONG ---
+# Pattern: Cattura "rsntds" o "hfds" all'inizio -> diventa nome colonna
+# Cattura il numero alla fine -> diventa time_index
+df_long <- df_wide_filtered %>%
+  pivot_longer(
+    cols = -c(x, y),
+    names_to = c(".value", "time_id"), 
+    names_pattern = "^(rsntds|hfds).*_([0-9]+)$" 
+  ) %>%
+  mutate(time_id = as.numeric(time_id))
+
+# --- 7. Gestione Date ---
+# Recuperiamo le date reali dal raster
+date_reali <- time(r_crop)
+
+# Creiamo la mappa degli indici (date univoche)
+date_uniche <- unique(date_reali)
+
+mappa_date <- data.frame(
+  time_id = 1:length(date_uniche), 
+  Date = date_uniche
+)
+
+# --- 8. Join Finale e Rinominazione ---
+dataset_statistico_flux <- df_long %>%
+  left_join(mappa_date, by = "time_id") %>%
+  rename(
+    Lon = x, 
+    Lat = y,
+    Solar_Flux = rsntds, # Rinominiamo per chiarezza
+    Heat_Flux = hfds
+  ) %>%
+  select(Date, Lon, Lat, Solar_Flux, Heat_Flux)
+
+# --- Controllo ---
+head(dataset_statistico_flux)
+summary(dataset_statistico_flux)
+```
+
+Mappa dei solar_flux medi:
+```{r mappa media solar flux, message=FALSE, warning=FALSE}
+# 1. Calcola la media per ogni pixel
+mappa_media_solar <- dataset_statistico_flux %>%
+  group_by(Lon, Lat) %>%
+  summarise(Mean_Solar = mean(Solar_Flux, na.rm = TRUE))
+
+# 2. Plotta la media
+ggplot(mappa_media_solar, aes(x = Lon, y = Lat, fill = Mean_Solar)) +
+  geom_tile() +
+  
+  # Uso 'inferno' (Giallo/Arancio/Nero) ideale per intensità solare
+  # Niente log10 qui
+  scale_fill_viridis_c(
+    option = "inferno", 
+    name = "W/m^2"
+  ) + 
+  
+  coord_fixed(ratio = 1.3) +
+  labs(
+    title = "Radiazione Solare Media (Net Downward Shortwave Flux)",
+    subtitle = "Energia solare assorbita dalla superficie del mare",
+    x = "Longitudine",
+    y = "Latitudine"
+  ) +
+  theme_minimal()
+```
+
+Mappa degli heat_flux medi:
+```{r mappa media heat flux, message=FALSE, warning=FALSE}
+# 1. Calcola la media per ogni pixel
+mappa_media_heat <- dataset_statistico_flux %>%
+  group_by(Lon, Lat) %>%
+  summarise(Mean_Heat = mean(Heat_Flux, na.rm = TRUE))
+
+# 2. Plotta la media
+ggplot(mappa_media_heat, aes(x = Lon, y = Lat, fill = Mean_Heat)) +
+  geom_tile() +
+  
+  # Uso 'plasma' per avere un buon contrasto
+  scale_fill_viridis_c(
+    option = "plasma", 
+    name = "W/m^2"
+  ) + 
+  
+  coord_fixed(ratio = 1.3) +
+  labs(
+    title = "Flusso di Calore Netto Medio (Surface Downward Heat Flux)",
+    subtitle = "Positivo = Il mare si scalda | Negativo = Il mare si raffredda",
+    x = "Longitudine",
+    y = "Latitudine"
+  ) +
+  theme_minimal()
+```
+

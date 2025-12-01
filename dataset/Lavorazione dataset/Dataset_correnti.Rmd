@@ -1,0 +1,133 @@
+---
+title: "Dataset boe - correnti"
+author: "Leo"
+date: "2025-11-23"
+output: html_document
+---
+
+
+```{r caricamento dataset, message=FALSE, warning=FALSE}
+# --- 1. Caricamento Librerie ---
+library(terra)
+library(tidyverse)
+library(lubridate)
+
+# --- 2. Importazione del File ---
+nome_file <- "raw_correnti_31052022_31052023.nc"
+r <- rast(nome_file)
+
+# Controllo: vedrai che i nomi sono lunghi (tipo uo_depth..._1)
+print(names(r)[1:5]) 
+
+# --- 3. Ritaglio Area (ROI) ---
+# Saltiamo la selezione delle variabili per ora, tagliamo subito l'area
+roi <- ext(12, 14, 44, 46) 
+r_crop <- crop(r, roi)
+
+# --- 4. Conversione in Data Frame ---
+df_wide <- as.data.frame(r_crop, xy = TRUE, na.rm = TRUE)
+
+# --- 5. Pulizia Preventiva (Selezione solo di uo e vo) ---
+# Questo passaggio è fondamentale se nel file ci sono altre variabili indesiderate.
+# Teniamo solo x, y e tutto ciò che inizia con "uo" o "vo"
+df_wide_filtered <- df_wide %>%
+  select(x, y, matches("^uo|^vo"))
+
+# --- 6. Trasformazione in Formato LONG (con separazione uo/vo) ---
+df_long <- df_wide_filtered %>%
+  pivot_longer(
+    cols = -c(x, y),
+    names_to = c(".value", "time_id"), 
+    names_pattern = "^(uo|vo).*_([0-9]+)$" 
+  ) %>%
+  mutate(time_id = as.numeric(time_id))
+
+# --- 7. Gestione Date ---
+# Recuperiamo le date reali
+date_reali <- time(r_crop)
+
+# Creiamo la mappa degli indici. 
+# Nota: 'time(r)' potrebbe restituire date duplicate (una per 'uo' e una per 'vo' per ogni giorno).
+# Prendiamo solo le date uniche.
+date_uniche <- unique(date_reali)
+
+mappa_date <- data.frame(
+  time_id = 1:length(date_uniche), 
+  Date = date_uniche
+)
+
+# --- 8. Join Finale e Calcolo Velocità ---
+dataset_statistico_correnti <- df_long %>%
+  left_join(mappa_date, by = "time_id") %>%
+  rename(Lon = x, Lat = y) %>%
+  mutate(
+    Current_Speed = sqrt(uo^2 + vo^2) # Calcolo Modulo Velocità
+  ) %>%
+  select(Date, Lon, Lat, uo, vo, Current_Speed)
+
+# --- Controllo ---
+head(dataset_statistico_correnti)
+```
+
+Facciamo un plot per vedere l'intensità delle clorofille.
+Mappa della media: Per vedere dove si accumula solitamente la clorofilla (es. vicino alla foce del Po).
+
+```{r mappa media correnti, message=FALSE, warning=FALSE}
+library(ggplot2)
+library(dplyr)
+library(viridis)
+
+# 1. Calcola la media della velocità per ogni pixel
+mappa_media_corr <- dataset_statistico_correnti %>%
+  group_by(Lon, Lat) %>%
+  summarise(Mean_Speed = mean(Current_Speed, na.rm = TRUE))
+
+# 2. Plotta la media
+ggplot(mappa_media_corr, aes(x = Lon, y = Lat, fill = Mean_Speed)) +
+  geom_tile() +
+  
+  # Uso 'plasma' perché ha un contrasto alto (viola scuro -> giallo brillante)
+  # Rimuovo 'trans="log10"' per avere una scala lineare più leggibile per la fisica
+  scale_fill_viridis_c(option = "plasma", name = "Velocità (m/s)") + 
+  
+  coord_fixed(ratio = 1.3) +
+  labs(
+    title = "Intensità Media delle Correnti (2022-2023)",
+    subtitle = "Si nota la corrente costiera discendente (Western Adriatic Current)?",
+    x = "Longitudine", 
+    y = "Latitudine"
+  ) +
+  theme_minimal()
+```
+
+
+Mappa di un giorno specifico (il primo in questo esempio):
+```{r mappa giorno correnti, message=FALSE, warning=FALSE}
+# 1. Filtriamo il primo giorno disponibile
+giorno_da_plottare <- min(dataset_statistico_correnti$Date)
+
+dati_giorno_corr <- dataset_statistico_correnti %>%
+  filter(Date == giorno_da_plottare)
+
+# 2. Creiamo il Plot
+ggplot(dati_giorno_corr, aes(x = Lon, y = Lat, fill = Current_Speed)) +
+  geom_tile() + 
+  
+  # Uso 'turbo' o 'viridis'. 'turbo' è molto usato in fisica per evidenziare i dettagli.
+  scale_fill_viridis_c(
+    option = "turbo", 
+    name = "Speed (m/s)"
+  ) +
+  
+  coord_fixed(ratio = 1.3) +
+  labs(
+    title = paste("Campo di Velocità del", format(giorno_da_plottare, "%d %B %Y")),
+    subtitle = "Dati CMCC Reanalysis",
+    x = "Longitudine",
+    y = "Latitudine"
+  ) +
+  theme_minimal()
+```
+
+
+

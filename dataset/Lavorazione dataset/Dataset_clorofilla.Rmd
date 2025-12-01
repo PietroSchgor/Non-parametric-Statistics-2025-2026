@@ -1,0 +1,119 @@
+---
+title: "Dataset boe - clorofilla"
+author: "Leo"
+date: "2025-11-23"
+output: html_document
+---
+
+```{r caricamento dataset clorofilla, message=FALSE, warning=FALSE}
+# --- 1. Caricamento ---
+library(terra)
+library(tidyverse)
+library(lubridate)
+
+nome_file <- "raw_clorofilla_31052022_31052023.nc"
+r <- rast(nome_file)
+
+# --- 2. Ritaglio Area ---
+roi <- ext(12, 14, 44, 46) 
+r_crop <- crop(r, roi)
+
+# --- 3. Conversione in DataFrame (WIDE) ---
+df_wide <- as.data.frame(r_crop, xy = TRUE, na.rm = TRUE)
+
+# --- 4. Pivot Intelligente (Separazione chl e phyc) ---
+# names_pattern spiega a R come leggere le colonne:
+# ^([a-z]+)  -> Prendi le lettere all'inizio (cattura "chl" o "phyc") -> Diventa nome colonna
+# _.*_       -> Ignora la parte centrale ("_depth=1.01...")
+# ([0-9]+)$  -> Prendi il numero alla fine -> Diventa time_index
+
+df_long <- df_wide %>%
+  pivot_longer(
+    cols = -c(x, y),
+    names_to = c(".value", "time_index"), 
+    names_pattern = "^([a-z]+)_.*_([0-9]+)$"
+  ) %>%
+  mutate(time_index = as.numeric(time_index))
+
+# --- 5. Gestione Date ---
+# time(r_crop) restituirà 732 date (366 per chl + 366 per phyc).
+# A noi ne servono solo 366 univoche.
+date_reali <- unique(time(r_crop))
+
+mappa_date <- data.frame(
+  time_index = 1:length(date_reali),
+  Date = date_reali
+)
+
+# --- 6. Join Finale ---
+dataset_statistico_clorofilla <- df_long %>%
+  left_join(mappa_date, by = "time_index") %>%
+  select(Date, Lon = x, Lat = y, Chl = chl, Phyc = phyc) # Rinomina maiuscolo per eleganza
+
+# Controllo
+head(dataset_statistico_clorofilla)
+
+# --- 9. Non voglio la colonna del Fitoplankton ---
+# Rimuovi la colonna Phyc
+dataset_statistico_clorofilla <- dataset_statistico_clorofilla %>%
+  select(-Phyc)
+
+# Controlla che sia sparita
+head(dataset_statistico_clorofilla)
+```
+
+Facciamo un plot per vedere l'intensità delle clorofille. Mappa della media: Per vedere dove si accumula solitamente la clorofilla (es. vicino alla foce del Po).
+
+```{r mappa media clorofilla, message=FALSE, warning=FALSE}
+library(ggplot2)
+library(dplyr)
+library(viridis) # Per le scale di colori scientifiche
+
+# 1. Calcola la media per ogni pixel (Lat/Lon) su tutto l'anno
+mappa_media <- dataset_statistico_clorofilla %>%
+  group_by(Lon, Lat) %>%
+  summarise(Mean_Chl = mean(Chl, na.rm = TRUE))
+
+# 2. Plotta la media
+ggplot(mappa_media, aes(x = Lon, y = Lat, fill = Mean_Chl)) +
+  geom_tile() +
+  scale_fill_viridis_c(option = "magma", trans = "log10", name = "Media Chl") + # 'magma' va dal nero al bianco/giallo
+  coord_fixed(ratio = 1.3) +
+  labs(title = "Distribuzione Media della Clorofilla (2022-2023)") +
+  theme_minimal()
+```
+
+Mappa di un giorno specifico (il primo in questo esempio):
+
+```{r}
+# 1. Filtriamo solo un giorno (altrimenti R sovrappone 365 mappe!)
+giorno_da_plottare <- min(dataset_statistico_clorofilla$Date) # Oppure as.Date("2022-08-15")
+
+dati_giorno <- dataset_statistico_clorofilla %>%
+  filter(Date == giorno_da_plottare)
+
+# 2. Creiamo il Plot
+ggplot(dati_giorno, aes(x = Lon, y = Lat, fill = Chl)) +
+  geom_tile() +  # Usa dei "quadratini" per ogni pixel
+  
+  # --- STILE E COLORI ---
+  # 'viridis' è la scala migliore: blu scuro (poco) -> verde -> giallo (tanto)
+  scale_fill_viridis_c(
+    option = "viridis",
+    trans = "log10",  # <--- QUESTA è la chiave magica
+    name = "Chl (log scale)",
+    direction = 1 # 1 = colori scuri per valori bassi, chiari per alti
+  ) +
+  
+  # --- COORDINATE ---
+  coord_fixed(ratio = 1.3) + # Mantiene le proporzioni della mappa
+  
+  # --- TITOLI ---
+  labs(
+    title = paste("Mappa Clorofilla del", format(giorno_da_plottare, "%d %B %Y")),
+    subtitle = "Dati Copernicus Reanalysis",
+    x = "Longitudine",
+    y = "Latitudine"
+  ) +
+  theme_minimal()
+```

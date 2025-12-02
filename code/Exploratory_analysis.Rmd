@@ -1,0 +1,56 @@
+---
+title: "Exploratory analysis"
+author: "Leo"
+date: "2025-11-28"
+output: html_document
+---
+
+### Libraries
+
+```{r}
+library("corrplot")
+library(dplyr)
+dsMERGIATO <- read.csv("/Users/leomarcellopoli/Documents/Nonparametric/Project/Non-parametric-Statistics-2025-2026/dataset/dataset_MERGIATO", header = TRUE, sep = ",")
+
+```
+
+## Import dataset
+
+```{r read dataset}
+set.seed(123) # Per riproducibilità
+indici_random <- sample(1:nrow(dsMERGIATO), 10000)
+dsridotto <- dsMERGIATO[indici_random, -1]      # e senza date
+dsclorofilla <- dsridotto$Chl
+dscovariate <- dsridotto[, -which(colnames(dsridotto) == "Chl")]
+```
+
+## Correlation plot
+
+```{r}
+corrplot(cor(dsridotto), method = "circle")
+```
+
+## Scatterplot
+
+```{r scatterplot, echo=TRUE}
+for (i in 1:ncol(dscovariate)) {
+  
+  # A. Estrazione dinamica del nome della colonna X
+  nome_covariata <- colnames(dscovariate)[i]
+  
+  # B. Plot con xlab dinamico
+  # plot(X, Y, ...)
+  plot(dscovariate[,i], 
+       dsclorofilla, 
+       pch = 16, 
+       cex = 0.5, # Punti piccoli
+       col = rgb(0.7, 0, 0, 0.4), # Colore rosso trasparente
+       ylab = "Clorofilla (Chl)",
+       xlab = nome_covariata, # <--- QUI STA LA CORREZIONE
+       main = paste("Chl vs", nome_covariata)
+  ) 
+}
+```
+
+
+

@@ -27,7 +27,7 @@ library(fields)   # for spatial plotting
 
 
 # 1) Carica dataset (usa il path locale caricato)
-path <- "dataset_MERGIATO"
+path <- "dataset/dataset_MERGIATO"
 # il file dovrebbe essere in formato csv; se non lo fosse, adattare
 df <- read.csv(path, stringsAsFactors = FALSE)
 
@@ -91,12 +91,14 @@ chl_mat <- make_matrix("Chl")
 temp_mat <- make_matrix("Temp")
 sal_mat  <- make_matrix("Salinity")
 solar_mat <- make_matrix("Solar_Flux")
+heat_mat <- make_matrix("Heat_Flux")
 wind_u_mat <- make_matrix("uo")
 wind_v_mat <- make_matrix("vo")
 
 time <- seq(1, 366)
 
 par(mfrow=c(1,1))
+par(mar = c(4, 4, 2, 1))
 # Prima il grafico
 matplot(time, t(chl_mat)[, 1:30], type = 'l', lwd = 3, main = "Chlorofilla curves",
         xlab = "day", ylab = " ")

@@ -1,0 +1,206 @@
+---
+title: "Pipeline FDA: Analisi Funzionale Alto Adriatico"
+author: "Leo"
+date: "`r Sys.Date()`"
+output: 
+  html_document:
+    theme: flatly
+    toc: true
+    toc_float: true
+    number_sections: true
+    code_folding: show
+---
+
+```{r setup, include=FALSE}
+# Opzioni globali: nasconde messaggi e warning di sistema, mostra il codice
+knitr::opts_chunk$set(echo = TRUE, message = FALSE, warning = FALSE, fig.align = "center")
+```
+
+# Introduzione
+
+**Scopo dell'analisi:** Trasformare dati spaziali/temporali discreti (punti nel tempo) in curve funzionali continue per analizzarne la varianza tramite Functional PCA (FPCA).
+**Dataset:** Dati Copernicus Marine (Clorofilla, Temperatura, Salinità) per l'Alto Adriatico.
+
+# Setup e Librerie
+
+Carichiamo le librerie necessarie per la manipolazione dati (`tidyverse`), l'analisi funzionale (`fda`) e la visualizzazione spaziale (`maps`, `fields`).
+
+```{r librerie}
+library(tidyverse)
+library(lubridate)
+library(data.table)
+library(fda)        # Analisi Funzionale
+library(maps)       # Per i confini geografici
+library(fields)     # Utilità grafiche spaziali
+```
+
+# Caricamento e Pre-processing
+
+In questa fase importiamo il dataset "mergiato", convertiamo le date nel formato corretto e ci assicuriamo che l'ordinamento sia coerente (Latitudine, Longitudine, Data) per le fasi successive.
+
+```{r caricamento_dati}
+# Imposta il percorso del file
+path <- "/Users/leomarcellopoli/Documents/Nonparametric/Project/Non-parametric-Statistics-2025-2026/dataset/dataset_MERGIATO"
+
+# Lettura del CSV
+df <- read.csv(path, stringsAsFactors = FALSE)
+
+# Pre-processing:
+# 1. Conversione Data
+# 2. Ordinamento (Fondamentale per la struttura a matrice)
+df <- df %>%
+  mutate(Date = as.Date(Date)) %>%
+  arrange(Lon, Lat, Date)
+
+# Gestione ID Stazioni spaziali
+setDT(df)
+locations <- unique(df[, .(Lon, Lat)])
+locations$loc_id <- seq_len(nrow(locations))
+
+# Join per assegnare loc_id al dataset principale
+df <- df %>% left_join(locations, by = c("Lon","Lat"))
+
+# Info Dataset
+cat("Righe totali:", nrow(df), "\n")
+cat("Stazioni uniche:", nrow(locations), "\n")
+cat("Giorni totali:", length(unique(df$Date)), "\n")
+```
+
+# Trasformazione in Matrici (Data-Matrix)
+
+La libreria `fda` richiede i dati in formato matrice (Stazioni x Tempo), non in formato "Tidy". Qui eseguiamo la conversione per le variabili di interesse.
+
+```{r creazione_matrici}
+# Definiamo l'asse temporale completo
+dates <- sort(unique(df$Date))
+T_len <- length(dates)
+time_seq <- 1:T_len
+
+# Funzione personalizzata per trasformare il dataset in matrice
+make_matrix <- function(varname){
+  m <- matrix(NA, nrow = nrow(locations), ncol = T_len)
+  colnames(m) <- as.character(dates)
+  
+  for(i in seq_len(nrow(locations))){
+    tmp <- df %>% filter(loc_id == i) %>% arrange(Date)
+    if(nrow(tmp) > 0){
+      idx <- match(as.character(tmp$Date), colnames(m))
+      m[i, idx] <- tmp[[varname]]
+    }
+  }
+  return(m)
+}
+
+# Creazione Matrici
+chl_mat  <- make_matrix("Chl")
+temp_mat <- make_matrix("Temp")
+sal_mat  <- make_matrix("Salinity")
+# solar_mat <- make_matrix("Solar_Flux") 
+```
+
+# Esplorazione Grafica
+
+Visualizziamo le serie temporali "grezze" (Spaghetti Plot) per le prime 30 stazioni e le localizziamo sulla mappa per capire il contesto geografico.
+
+```{r plot_esplorativo, fig.width=10, fig.height=5}
+# 1. Definiamo gli indici da prendere (Campionamento sistematico)
+# seq(da, a, passo): Prende la riga 1, la 51, la 101, ecc. fino alla fine
+idx_plot <- seq(1, nrow(locations), by = 50)
+
+# Calcoliamo quante stazioni stiamo plottando (saranno circa 26-27 su 1315)
+n_plot <- length(idx_plot) 
+
+# 2. Estraiamo le coordinate di queste specifiche stazioni
+loc_plot <- locations[idx_plot, ]
+
+# Setup Layout affiancato
+par(mfrow = c(1, 2), mar = c(4, 4, 3, 1)) 
+
+# A. Spaghetti Plot (Sinistra)
+# ATTENZIONE: Qui usiamo [, idx_plot] invece di [, 1:n_plot]
+# perché dobbiamo pescare le colonne specifiche corrispondenti agli indici scelti
+matplot(time_seq, t(chl_mat)[, idx_plot], 
+        type = 'l', lty = 1, lwd = 1.5, col = rainbow(n_plot),
+        main = paste("Curve Clorofilla (Campionate ogni 50)"),
+        xlab = "Giorno dell'anno", ylab = "Chl (mg/m3)")
+
+# B. Mappa Stazioni (Destra)
+plot(loc_plot$Lon, loc_plot$Lat,
+     pch = 19, cex = 1.5, col = rainbow(n_plot),
+     xlim = c(12, 14), ylim = c(44, 46), asp = 1.3,
+     xlab = "Lon", ylab = "Lat", main = "Posizione Stazioni Campionate")
+map('world', add = TRUE, col = "gray")
+grid()
+
+# Reset layout
+par(mfrow = c(1, 1)) 
+```
+
+# Smoothing Funzionale (B-Splines)
+
+Trasformiamo i dati discreti in funzioni continue $x(t)$ utilizzando una base di B-Splines.
+Abbiamo scelto **35 basi** come compromesso tra il fitting dei dati e la rimozione del rumore (smoothing).
+
+```{r smoothing}
+nbasis <- 35 
+basis  <- create.bspline.basis(rangeval = c(1, T_len), nbasis = nbasis)
+
+cat("Esecuzione Smoothing...\n")
+chl_fd  <- Data2fd(y = t(chl_mat), argvals = time_seq, basisobj = basis)
+temp_fd <- Data2fd(y = t(temp_mat), argvals = time_seq, basisobj = basis)
+sal_fd  <- Data2fd(y = t(sal_mat), argvals = time_seq, basisobj = basis)
+
+# Verifica visiva
+plot(chl_fd[1:30], main = "Curve Lisciate (B-Splines)", col=rainbow(30))
+```
+
+# Functional PCA (FPCA)
+
+Analizziamo i modi principali di variazione delle curve di clorofilla attraverso l'Analisi delle Componenti Principali Funzionali.
+
+```{r fpca_calcolo}
+nharm <- 6
+chl_fpca <- pca.fd(chl_fd, nharm = nharm, centerfns = TRUE)
+```
+
+## Scree Plot: Varianza Spiegata
+
+Verifichiamo quante componenti sono necessarie per spiegare la maggior parte della variabilità (target > 90%).
+
+```{r fpca_screeplot, fig.width=10, fig.height=5}
+par(mfrow=c(1,2))
+
+# Grafico degli autovalori
+plot(chl_fpca$values[1:10], type='b', main="Autovalori", xlab="Componente", ylab="Valore")
+
+# Grafico varianza cumulata
+plot(cumsum(chl_fpca$values)[1:10]/sum(chl_fpca$values), type='b', 
+     ylim=c(0.6, 1), main="Varianza Cumulata", xlab="Componente", ylab="% Cumulato")
+abline(h=0.9, col="red", lty=2)
+
+par(mfrow=c(1,1))
+```
+
+## Interpretazione delle Armoniche
+
+Visualizziamo la forma delle prime 3 autofunzioni (Eigenfunctions) per interpretare i pattern temporali.
+
+```{r fpca_harmonics, fig.width=10, fig.height=4}
+par(mfrow = c(1,3))
+plot(chl_fpca$harmonics[1,], col=1, ylab='FPC1', main="1° Modo Variazione")
+abline(h=0, lty=2)
+plot(chl_fpca$harmonics[2,], col=2, ylab='FPC2', main="2° Modo Variazione")
+abline(h=0, lty=2)
+plot(chl_fpca$harmonics[3,], col=3, ylab='FPC3', main="3° Modo Variazione")
+abline(h=0, lty=2)
+par(mfrow=c(1,1))
+```
+
+## Perturbation Plot
+
+Questo grafico mostra come la media globale (linea continua) viene modificata aggiungendo (+) o sottraendo (-) una deviazione standard lungo ciascuna componente principale. Aiuta a visualizzare l'effetto fisico della componente.
+
+```{r fpca_perturbation}
+plot.pca.fd(chl_fpca, nx=100, pointplot=TRUE, harm=c(1,2,3), expand=0, cycle=FALSE)
+cat("Analisi Completata.")
+```

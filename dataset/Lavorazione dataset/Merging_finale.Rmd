@@ -1,0 +1,129 @@
+---
+title: "Merging finale"
+author: "Leo"
+date: "2025-11-24"
+output: html_document
+---
+
+## Link utili
+
+- Mediterranean Sea Biogeochemistry Reanalysis
+Dove trovare il dataset relativo alla clorofilla.
+https://data.marine.copernicus.eu/product/MEDSEA_MULTIYEAR_BGC_006_008/download?dataset=med-ogs-pft-rean-d_202105
+
+- Mediterranean Sea Physics Reanalysis
+Dove trovare i dataset relativi alla temperatura, correnti, ... .
+https://data.marine.copernicus.eu/product/MEDSEA_MULTIYEAR_PHY_006_004/download?dataset=med-cmcc-cur-rean-h_202012
+
+## Coordinate
+
+12, 14, 44, 46
+
+## Target e Variabili
+
+### Target
+
+- Clorofilla
+
+È un dato (semi)osservato: i satelliti vedono letteralmente il colore del mare e tramite algoritmi misurano quanta luce verde viene riflessa, da cui determinano la quantità di clorofilla presente nel mare. Inoltre il dataset da noi scaricato è un modello di Rianalisi, cioè che utilizza le osservazioni reali e le usa per correggere il modello ogni giorno (non so bene cosa voglia dire), mentre il comportamento della biomassa (cioè dei plankton) non è sempre lineare rispetto alle altre variabili fisiche.
+Il valore di clorofilla reagisce istantaneamente ai cambiamenti fisici: se il **Mixed Layer** porta nutrienti, la clorofilla esplode subito, mentre la biomassa ci mette di più a crescere.
+Ulteriore motivo per cui la clorofilla è meglio della variabile Fitoplankton è perché il dato rilevato che troviamo in tabella è in realtà un dato simulato.
+
+### Covariate
+
+- Temperatura (Fondamentale)
+
+La temperatura regola il metabolismo delle alghe.
+Menu: Temperature, daily • med-cmcc-tem-rean-d
+Variabile da spuntare: thetao (Sea water potential temperature).
+
+- Salinità (Importante per input fluviali)
+
+La salinità bassa indica acqua dolce (fiumi = nutrienti) vicino alla costa.
+Menu: Salinity, daily • med-cmcc-sal-rean-d
+Variabile da spuntare: so (Sea water salinity).
+
+- Mixed Layer Depth (IL DRIVER PIÙ IMPORTANTE)
+
+Come detto nel progetto, questa variabile dice quanto il mare è mescolato. MLD profondo = nutrienti che risalgono = bloom algale.
+Menu: Mixed layer depth, daily • med-cmcc-mld-rean-d
+Variabile da spuntare: mlotst (Ocean mixed layer thickness).
+
+- Currents (Trasporto)
+
+Sposta il plancton fisicamente da una zona all'altra.
+Menu: Currents, daily • med-cmcc-cur-rean-d
+Variabili da spuntare: uo (Eastward velocity), vo (Northward velocity).
+
+- Solar Flux
+
+È la quantità di Luce Solare (radiazione a onda corta) che entra effettivamente nell'acqua.
+Questa variabile è il Trigger (l'interruttore). Se usi un modello non parametrico (come Splines), il modello imparerà una regola di interazione fondamentale:
+Luce < *Soglia* => Clorofilla ≈ 0
+
+- Heat Flux
+
+È la somma di tutto il calore che entra ed esce (Sole + Raggi Infrarossi - Evaporazione):
+Valore Positivo: Il mare guadagna calore (si scalda).
+Valore Negativo: Il mare perde calore (si raffredda).
+
+## Merging
+
+Prima facciamo degli arrotondamenti:
+```{r arrotondamento coordinate}
+# Esempio di fix se le coordinate non combaciano perfettamente
+# Arrotonda a 3 cifre decimali (circa 100 metri di precisione, sufficiente)
+arrotonda_coords <- function(df) {
+  df %>% mutate(Lon = round(Lon, 3), Lat = round(Lat, 3))
+}
+```
+
+Usiamo altri script per scaricare i dataset e magicamente ci troveremo questi dataset puliti e ordinati, vanno solo mergiati:
+```{r merging}
+library(tidyverse)
+
+# Target:
+## Clorofilla
+dataset_statistico_clorofilla <- arrotonda_coords(dataset_statistico_clorofilla)
+
+# Variabili:
+## Temperatura
+dataset_statistico_temp <- arrotonda_coords(dataset_statistico_temp)
+## Salinità
+dataset_statistico_sal <- arrotonda_coords(dataset_statistico_sal)
+## Mixed Layer Depth
+dataset_statistico_mld <- arrotonda_coords(dataset_statistico_mld)
+## Correnti
+dataset_statistico_correnti <- arrotonda_coords(dataset_statistico_correnti)
+## Solar & Heat flux
+dataset_statistico_flux <- arrotonda_coords(dataset_statistico_flux)
+
+# MERGING
+# 1. Partiamo dal dataset TARGET (Clorofilla)
+dataset_MERGIATO <- dataset_statistico_clorofilla %>%
+  
+  # 2. Uniamo la TEMPERATURA
+  left_join(dataset_statistico_temp, by = c("Date", "Lon", "Lat")) %>%
+  
+  # 3. Uniamo la SALINITÀ (se l'hai creato)
+  left_join(dataset_statistico_sal, by = c("Date", "Lon", "Lat")) %>%
+  
+  # 4. Uniamo il MIXED LAYER DEPTH (se l'hai creato)
+  left_join(dataset_statistico_mld, by = c("Date", "Lon", "Lat")) %>%
+  
+  # 5. Uniamo le CORRENTI (se l'hai creato)
+  # Nota: qui aggiungerà uo, vo e Current_Speed
+  left_join(dataset_statistico_correnti, by = c("Date", "Lon", "Lat")) %>%
+
+  # 6. Uniamo i FLUSSI (Solar e Heat)
+  left_join(dataset_statistico_flux, by = c("Date", "Lon", "Lat"))
+
+# --- CONTROLLO FINALE ---
+# Ora dovresti avere una tabella con tantissime colonne
+head(dataset_MERGIATO)
+```
+
+```{r scrivo csv}
+write.csv(dataset_MERGIATO, file = "dataset_MERGIATO", row.names = FALSE)
+```
+

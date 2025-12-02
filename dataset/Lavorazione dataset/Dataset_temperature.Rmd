@@ -1,0 +1,167 @@
+---
+title: "Dataset_temperature"
+author: "Leo"
+date: "2025-11-24"
+output: html_document
+---
+
+```{r caricamento dataset temperatura, message=FALSE, warning=FALSE}
+# --- 1. Caricamento ---
+library(terra)
+library(tidyverse)
+library(lubridate)
+
+# Nome del file temperatura
+nome_file <- "raw_temperatura_31052022_31052023.nc"
+r <- rast(nome_file)
+
+# Controllo: dovresti vedere 'thetao' (Temperature) tra i nomi
+print(names(r)[1:5])
+
+# --- 2. Ritaglio Area ---
+roi <- ext(12, 14, 44, 46) 
+r_crop <- crop(r, roi)
+
+# --- 3. Conversione in DataFrame (WIDE) ---
+df_wide <- as.data.frame(r_crop, xy = TRUE, na.rm = TRUE)
+
+# --- 4. Pivot Intelligente ---
+# La regex ^([a-z]+) cattura la parte alfabetica del nome (es. "thetao")
+# La regex ([0-9]+)$ cattura l'indice temporale
+df_long <- df_wide %>%
+  pivot_longer(
+    cols = -c(x, y),
+    names_to = c(".value", "time_id"), 
+    names_pattern = "^([a-z]+).*_([0-9]+)$"
+  ) %>%
+  mutate(time_id = as.numeric(time_id))
+
+# --- 5. Gestione Date ---
+date_reali <- unique(time(r_crop))
+
+mappa_date <- data.frame(
+  time_id = 1:length(date_reali),
+  Date = date_reali
+)
+
+# --- 6. Join Finale ---
+dataset_statistico_temp <- df_long %>%
+  left_join(mappa_date, by = "time_id") %>%
+  rename(
+    Lon = x, 
+    Lat = y,
+    Temp = thetao  # Rinominiamo 'thetao' in 'Temp'. Se la variabile si chiamava diversamente, correggi qui.
+  ) %>%
+  select(Date, Lon, Lat, Temp)
+
+# --- Controllo ---
+head(dataset_statistico_temp)
+summary(dataset_statistico_temp)
+```
+
+Plot:
+```{r mappa media temperatura, message=FALSE, warning=FALSE}
+# 1. Calcola la media Temperatura
+mappa_media_temp <- dataset_statistico_temp %>%
+  group_by(Lon, Lat) %>%
+  summarise(Mean_Temp = mean(Temp, na.rm = TRUE))
+
+# 2. Plot
+ggplot(mappa_media_temp, aes(x = Lon, y = Lat, fill = Mean_Temp)) +
+  geom_tile() +
+  
+  # 'inferno' o 'magma' sono ottimi per rappresentare il calore
+  scale_fill_viridis_c(
+    option = "inferno", 
+    name = "°C"
+  ) +
+  
+  coord_fixed(ratio = 1.3) +
+  labs(
+    title = "Temperatura Superficiale Media (SST)",
+    subtitle = "Dataset Copernicus Reanalysis",
+    x = "Longitudine",
+    y = "Latitudine"
+  ) +
+  theme_minimal()
+```
+
+Plot del primo giorno:
+```{r mappa giorno temperatura, message=FALSE, warning=FALSE}
+# 1. Filtriamo solo il primo giorno
+giorno_da_plottare <- min(dataset_statistico_temp$Date)
+
+dati_giorno_temp <- dataset_statistico_temp %>%
+  filter(Date == giorno_da_plottare)
+
+# 2. Creiamo il Plot
+ggplot(dati_giorno_temp, aes(x = Lon, y = Lat, fill = Temp)) +
+  geom_tile() +
+  
+  # --- STILE E COLORI ---
+  # Uso 'inferno' per la temperatura
+  scale_fill_viridis_c(
+    option = "inferno", 
+    name = "°C",
+    direction = 1 
+  ) +
+  
+  coord_fixed(ratio = 1.3) +
+  
+  labs(
+    title = paste("Mappa Temperatura del", format(giorno_da_plottare, "%d %B %Y")),
+    subtitle = "Dati Copernicus Reanalysis",
+    x = "Longitudine",
+    y = "Latitudine"
+  ) +
+  theme_minimal()
+```
+
+Temperature a Ferragosto e giorni della merla a confronto:
+**Cosa dovresti notare in questo grafico**
+1.  **Agosto (Ferragosto):** Il mare sarà quasi tutto rosso/arancione (25-28°C). Noterai forse delle zone leggermente più fredde vicino alle foci dei fiumi o dove c'è mescolamento verticale.
+2.  **Gennaio (Giorni della Merla):** Il mare sarà blu/azzurro (8-12°C).
+    * **Attenzione all'Adriatico del Nord:** In inverno, l'acqua vicino a Venezia/Trieste diventa gelida (spesso sui 6-8°C) a causa dei venti freddi (Bora) e della bassa profondità. Questo contrasto dovrebbe essere evidentissimo rispetto al resto del mare.
+```{r confronto ferragosto merla, message=FALSE, warning=FALSE}
+library(ggplot2)
+library(dplyr)
+library(viridis)
+
+# 1. Definiamo le due date target
+# Nota: Assicurati che le date esistano nel tuo file (che copre maggio 22 - maggio 23)
+data_ferragosto <- as.Date("2022-08-15")
+data_merla <- as.Date("2023-01-31")
+
+# 2. Filtriamo il dataset per queste due date
+dati_confronto <- dataset_statistico_temp %>%
+  mutate(Date_Only = as.Date(Date)) %>% # Sicurezza: convertiamo in data pura senza ore
+  filter(Date_Only %in% c(data_ferragosto, data_merla))
+
+# 3. Creiamo il Plot comparativo (Facet Wrap)
+ggplot(dati_confronto, aes(x = Lon, y = Lat, fill = Temp)) +
+  geom_tile() +
+  
+  # Usiamo 'inferno' o 'turbo' per evidenziare bene la differenza caldo/freddo
+  scale_fill_viridis_c(
+    option = "turbo", 
+    name = "Temp (°C)"
+  ) +
+  
+  coord_fixed(ratio = 1.3) +
+  
+  # Questo comando divide il grafico in due pannelli basati sulla data
+  facet_wrap(~Date_Only, ncol = 2) + 
+  
+  labs(
+    title = "Confronto Stagionale: Ferragosto vs Giorni della Merla",
+    subtitle = "Si nota la differenza tra la stratificazione estiva e il raffreddamento invernale?",
+    x = "Longitudine",
+    y = "Latitudine"
+  ) +
+  theme_minimal() +
+  theme(
+    strip.text = element_text(size = 12, face = "bold") # Rende più leggibili le date sopra i grafici
+  )
+```
+
+

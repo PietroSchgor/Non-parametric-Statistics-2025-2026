@@ -16,7 +16,13 @@ dsMERGIATO <- read.csv("/Users/leomarcellopoli/Documents/Nonparametric/Project/N
 
 ## Import dataset
 
+<<<<<<< Updated upstream:code/Exploratory_analysis.Rmd
 ```{r read dataset}
+=======
+## Impoert dataset
+```{r read dataset, include=FALSE}
+dataset_MERGIATO <- read.csv("dataset/dataset_MERGIATO", header = TRUE, sep = ",")
+>>>>>>> Stashed changes:Exploratory_analysis.Rmd
 set.seed(123) # Per riproducibilità
 indici_random <- sample(1:nrow(dsMERGIATO), 10000)
 dsridotto <- dsMERGIATO[indici_random, -1]      # e senza date

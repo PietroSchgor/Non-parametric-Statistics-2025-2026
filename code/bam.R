@@ -195,7 +195,7 @@ ggplot(plot_data, aes(x = Date)) +
   geom_line(aes(y = Predicted_Chl, color = "Predetto (Modello)"), linewidth = 1, linetype = "dashed") +
   
   # Suddivisione per coordinate geografiche
-  facet_wrap(~loc_id, scales = "free_y") +
+  facet_wrap(~loc_id, scales = "fixed") +
   
   # Stile
   theme_minimal() +

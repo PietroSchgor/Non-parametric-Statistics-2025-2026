@@ -105,7 +105,8 @@ Visualizziamo le serie temporali "grezze" (Spaghetti Plot) per le prime 30 stazi
 ```{r plot_esplorativo, fig.width=10, fig.height=5}
 # 1. Definiamo gli indici da prendere (Campionamento sistematico)
 # seq(da, a, passo): Prende la riga 1, la 51, la 101, ecc. fino alla fine
-idx_plot <- seq(1, nrow(locations), by = 50)
+#idx_plot <- seq(1, nrow(locations), by = 50)
+idx_plot <- c(3, 107, 253, 802, 1063, 1309)
 
 # Calcoliamo quante stazioni stiamo plottando (saranno circa 26-27 su 1315)
 n_plot <- length(idx_plot) 
@@ -121,7 +122,7 @@ par(mfrow = c(1, 2), mar = c(4, 4, 3, 1))
 # perché dobbiamo pescare le colonne specifiche corrispondenti agli indici scelti
 matplot(time_seq, t(chl_mat)[, idx_plot], 
         type = 'l', lty = 1, lwd = 1.5, col = rainbow(n_plot),
-        main = paste("Curve Clorofilla (Campionate ogni 50)"),
+        main = paste("Curve Clorofilla (6 stazioni di bam)"),
         xlab = "Giorno dell'anno", ylab = "Chl (mg/m3)")
 
 # B. Mappa Stazioni (Destra)

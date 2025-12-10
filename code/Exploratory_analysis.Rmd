@@ -7,26 +7,31 @@ output: html_document
 
 ### Libraries
 
-```{r}
+```{r libraries, include = FALSE}
 library("corrplot")
 library(dplyr)
-dsMERGIATO <- read.csv("/Users/leomarcellopoli/Documents/Nonparametric/Project/Non-parametric-Statistics-2025-2026/dataset/dataset_MERGIATO", header = TRUE, sep = ",")
+library(MASS)
+library(rgl)
+library(DepthProc)
+library(hexbin)
+library(aplpack)
+library(robustbase)
+```
 
+```{r dataset implementation, include=FALSE}
+#dsMERGIATO <- read.csv("/Users/leomarcellopoli/Documents/Nonparametric/Project/Non-parametric-Statistics-2025-2026/dataset/dataset_MERGIATO", header = TRUE, sep = ",")
+```
+
+```{r set seed, include=FALSE}
+set.seed(123) # Per riproducibilità
 ```
 
 ## Import dataset
 
-<<<<<<< Updated upstream:code/Exploratory_analysis.Rmd
-```{r read dataset}
-=======
-## Impoert dataset
 ```{r read dataset, include=FALSE}
-dataset_MERGIATO <- read.csv("dataset/dataset_MERGIATO", header = TRUE, sep = ",")
->>>>>>> Stashed changes:Exploratory_analysis.Rmd
-set.seed(123) # Per riproducibilità
-indici_random <- sample(1:nrow(dsMERGIATO), 10000)
+indici_random <- sample(1:nrow(dsMERGIATO), 20000)
 dsridotto <- dsMERGIATO[indici_random, -1]      # e senza date
-dsclorofilla <- dsridotto$Chl
+dsclorofilla <- as.data.frame(dsridotto[, which(colnames(dsridotto) == "Chl")])
 dscovariate <- dsridotto[, -which(colnames(dsridotto) == "Chl")]
 ```
 
@@ -47,7 +52,7 @@ for (i in 1:ncol(dscovariate)) {
   # B. Plot con xlab dinamico
   # plot(X, Y, ...)
   plot(dscovariate[,i], 
-       dsclorofilla, 
+       dsclorofilla[,1], 
        pch = 16, 
        cex = 0.5, # Punti piccoli
        col = rgb(0.7, 0, 0, 0.4), # Colore rosso trasparente
@@ -58,5 +63,45 @@ for (i in 1:ncol(dscovariate)) {
 }
 ```
 
+### Hexagonal binning
 
+to visualize data density
 
+```{r hexagonal binning, echo=TRUE}
+for (i in 1:ncol(dscovariate)) {
+  
+  # A. Estrazione dinamica del nome della colonna X
+  nome_covariata <- colnames(dscovariate)[i]
+  
+  # B. Hexagonal binning
+  bin = hexbin(dscovariate[,i], dsclorofilla[,1], xbins=30, xlab = nome_covariata, ylab="Chl")
+  plot(bin, main="Hexagonal Binning")
+
+}
+```
+
+Molti comportamenti particolari che vanno un attimo analizzati.
+
+## Depth measures
+
+```{r depth measures, echo=TRUE}
+for (i in 1:ncol(dscovariate)) {
+  #dP <- depthPersp(cbind(dscovariate[,i], dsclorofilla[,1]), depth_params = list(method='Tukey'), xlab = nome_covariata, ylab = "Chl")
+  dP <- DepthProc::depthContour(cbind(dscovariate[,i], dsclorofilla[,1]), depth_params = list(method='Tukey'))
+}
+```
+
+```{r other outliers, echo = TRUE}
+for (i in 1:ncol(dscovariate)) {
+  
+  # A. Estrazione dinamica del nome della colonna X
+  nome_covariata <- colnames(dscovariate)[i]
+  
+  # B. 
+  aplpack::bagplot(cbind(dscovariate[,i], dsclorofilla[,1]), show.whiskers = F, main = "bagplot")
+}
+```
+
+It may look like there are a lot of outliers, but it is a very high amount and also it seems that the pattern is quite uniform in the sense that the red points don't seem strange values to delete from the original data.
+
+So no outliers detected.

@@ -1,0 +1,329 @@
+---
+title: "Pipeline Avanzata: BAM & Forecasting Ricorsivo"
+subtitle: "Analisi Clorofilla Alto Adriatico"
+author: "Pietro & Gemini"
+date: "`r Sys.Date()`"
+output: 
+  html_document:
+    theme: cosmo
+    toc: true
+    toc_float: true
+    number_sections: true
+    code_folding: show
+editor_options: 
+  markdown: 
+    wrap: sentence
+---
+
+```{r setup, include=FALSE}
+# Impostazioni globali per i chunk
+knitr::opts_chunk$set(echo = TRUE, message = FALSE, warning = FALSE, fig.align = "center")
+setwd("/Users/leomarcellopoli/Documents/Nonparametric/Project/Non-parametric-Statistics-2025-2026")
+```
+
+# Introduzione
+
+Questa pipeline implementa un approccio di modellazione avanzata per la previsione della Clorofilla nell'Alto Adriatico.
+Vengono confrontati due approcci: 1.
+**BAM Spazio-Temporale (Standard):** Modello additivo generalizzato per Big Data.
+2.
+**BAM Autoregressivo (AR):** Modello dinamico con forecasting ricorsivo a più step.
+
+# Setup e Librerie
+
+Caricamento delle librerie necessarie per la manipolazione dati, la modellazione statistica (`mgcv`) e la visualizzazione.
+
+```{r librerie}
+library(tidyverse)  # Include ggplot2, dplyr, tidyr
+library(mgcv)       # Modelli GAM e BAM (Generalized Additive Models)
+library(lubridate)  # Gestione Date
+library(parallel)   # Per detectCores
+library(gridExtra)  # Per affiancare i plot (grid.arrange)
+library(viridis)    # Scale di colori per mappe
+```
+
+# Caricamento e Pre-processing
+
+## Importazione Dati
+
+Carichiamo il dataset "mergiato" contenente le variabili biogeochimiche e fisiche.
+
+```{r caricamento}
+path_dataset <- "/Users/leomarcellopoli/Documents/Nonparametric/Project/Non-parametric-Statistics-2025-2026/dataset/dataset_MERGIATO"
+df <- read.csv(path_dataset)
+
+# Rilevamento core per eventuale parallelizzazione (OpenMP)
+n_cores <- detectCores() - 1 
+cat("Core rilevati per BAM:", n_cores, "\n")
+```
+
+## Filtro Spaziale e Selezione Locazioni
+
+Per garantire la robustezza delle serie storiche, applichiamo un filtro rigoroso: manteniamo solo le stazioni (pixel) che hanno una serie temporale completa (366 giorni) e valori di clorofilla consistenti.
+
+```{r filtro_posizioni}
+# 1. Calcola la media per visualizzazione rapida
+mappa_media <- df %>%
+  group_by(Lon, Lat) %>%
+  summarise(Mean_Chl = mean(Chl, na.rm = TRUE), .groups = 'drop')
+
+# 2. Filtro: Mantieni solo stazioni con dati completi
+posizioni_target <- df %>%
+  group_by(Lat, Lon) %>%
+  summarise(
+    giorni_sopra_soglia = sum(Chl > 0.1, na.rm = TRUE), 
+    .groups = 'drop' 
+  ) %>%
+  mutate(loc_id = row_number()) %>%
+  filter(giorni_sopra_soglia >= 366) # Richiede serie completa
+
+cat("Numero di posizioni filtrate (dati completi):", nrow(posizioni_target), "\n")
+```
+
+## Feature Engineering Temporale
+
+Uniamo le posizioni filtrate al dataset originale e creiamo le variabili temporali necessarie per i modelli (Giorno dell'anno, Tempo numerico).
+
+```{r feature_engineering}
+data_proc <- df %>%
+  inner_join(posizioni_target, by = c("Lat", "Lon")) %>%
+  mutate(
+    Date = ymd(Date),
+    doy = yday(Date),               # Giorno dell'anno (1-366) per stagionalità
+    time_numeric = as.numeric(Date) # Tempo continuo per trend
+  ) %>%
+  arrange(Date) # Ordinamento fondamentale per i modelli temporali
+```
+
+# Modello 1: BAM Spazio-Temporale (Base)
+
+Questo primo approccio utilizza un modello additivo generalizzato per Big Data (`bam`) che modella la clorofilla in funzione dello spazio, del tempo e delle covariate ambientali contemporanee.
+
+## Split Training/Validation
+
+Utilizziamo gli ultimi 3 giorni della serie temporale come set di validazione per testare la capacità predittiva.
+
+```{r split_modello1}
+num_days2predict <- 3
+max_date <- max(data_proc$Date)
+cutoff_date <- max_date - days(num_days2predict)
+
+train_set <- data_proc %>% filter(Date <= cutoff_date)
+val_set   <- data_proc %>% filter(Date > cutoff_date)
+
+cat("Training Set:", nrow(train_set), "righe\n")
+cat("Validation Set:", nrow(val_set), "righe\n")
+```
+
+## Addestramento Modello
+
+La struttura del modello include: \* Interazione tensoriale spazio-tempo `te(Lon, Lat, time)`.
+\* Spline ciclica per la stagionalità `s(doy)`.
+\* Effetti non lineari delle covariate fisiche (`Temp`, `Salinity`, `MLD`, `Solar_Flux`).
+
+```{r addestramento_bam}
+cat("Inizio addestramento BAM standard...\n")
+
+model_bam <- bam(
+  Chl ~ 
+    # Interazione Spazio-Tempo
+    te(Lon, Lat, time_numeric, d=c(2,1), k=c(15, 15)) +
+    
+    # Stagionalità Ciclica
+    s(doy, bs = "cc", k = 10) +
+    
+    # Effetti Covariate
+    s(Temp, k=8) + s(Salinity, k=8) + s(MLD, k=8) + s(Solar_Flux, k=8),
+  
+  data = train_set,
+  method = "fREML",        # Ottimizzazione veloce
+  discrete = TRUE,         # Discretizzazione per performance
+  nthreads = 1,            # Set a 1 per compatibilità
+  chunk.size = 10000,
+  family = Gamma(link="log") # Distribuzione Gamma (dati positivi asimmetrici)
+)
+
+cat("Modello BAM standard addestrato.\n")
+```
+
+## Valutazione Performance
+
+Calcoliamo RMSE e MAE sul validation set.
+
+```{r valutazione_bam}
+preds <- predict(model_bam, newdata = val_set, type = "response", se.fit = TRUE)
+
+val_results <- val_set %>%
+  mutate(
+    Predicted_Chl = preds$fit,
+    SE = preds$se.fit,
+    Lower_CI = Predicted_Chl - 1.96 * SE,
+    Upper_CI = Predicted_Chl + 1.96 * SE
+  )
+
+rmse <- sqrt(mean((val_results$Chl - val_results$Predicted_Chl)^2))
+mae <- mean(abs(val_results$Chl - val_results$Predicted_Chl))
+
+cat("Risultati Modello 1 (Standard):\n")
+cat("RMSE:", round(rmse, 4), "\n")
+cat("MAE:", round(mae, 4), "\n")
+```
+
+# Modello 2: BAM Autoregressivo (AR)
+
+Per migliorare le prestazioni a breve termine, introduciamo componenti autoregressive: la clorofilla di oggi dipende fortemente dalla clorofilla di ieri.
+
+## Creazione Lag (Variabili Ritardate)
+
+Generiamo le variabili ritardate ($t-1$) per la clorofilla e per i predittori fisici.
+
+```{r lag_creation}
+data_lagged <- data_proc %>%
+  arrange(Lon, Lat, Date) %>%
+  group_by(Lon, Lat) %>%
+  mutate(
+    Chl_lag1      = lag(Chl, 1),
+    Temp_lag1     = lag(Temp, 1),
+    Salinity_lag1 = lag(Salinity, 1),
+    MLD_lag1      = lag(MLD, 1),
+    Solar_lag1    = lag(Solar_Flux, 1)
+  ) %>%
+  ungroup() %>%
+  drop_na(Chl_lag1, Temp_lag1, Salinity_lag1, MLD_lag1, Solar_lag1)
+
+# Nuovo Split
+train_set_ar <- data_lagged %>% filter(Date <= cutoff_date)
+val_set_ar   <- data_lagged %>% filter(Date > cutoff_date)
+
+cat("Training Set AR:", nrow(train_set_ar), "righe\n")
+```
+
+## Addestramento Modello AR
+
+Il modello include ora `s(Chl_lag1)` come predittore principale, insieme ai lag delle variabili ambientali e alle componenti spazio-temporali pure.
+
+```{r addestramento_bam_ar}
+# Pesi per gestire l'eteroschedasticità (facoltativo ma utile)
+weights_vec <- (exp(train_set_ar$Chl * 0.3) - 1) * 0.5
+
+cat("Inizio addestramento BAM Autoregressivo...\n")
+
+model_bam_ar <- bam(
+  Chl ~ 
+    # Componente Autoregressiva (Fondamentale)
+    s(Chl_lag1, k=20) +
+    
+    # Autoregressione Covariate Ambientali
+    s(Temp_lag1, k=20) + 
+    # (Altre covariate commentate per semplificazione)
+    
+    # Componenti Spazio-Temporali
+    te(Lon, Lat, doy, d=c(2,1), bs=c("tp", "cc"), k=c(20, 20)),
+  
+  data = train_set_ar,
+  method = "fREML",
+  discrete = TRUE,
+  nthreads = 1,
+  chunk.size = 10000,
+  weights = weights_vec,
+  family = tw(link = "log") # Tweedie: robusta per dati con skewness
+)
+
+cat("Modello BAM AR addestrato.\n")
+```
+
+## Forecasting Ricorsivo (Step-by-Step)
+
+Simuliamo una previsione reale a 3 giorni: il modello prevede il giorno $t+1$, e questa previsione viene usata come input (lag) per prevedere il giorno $t+2$, e così via.
+
+```{r forecasting_ricorsivo}
+# Inizializzazione
+last_observed_day <- train_set_ar %>% filter(Date == max(Date))
+forecast_results <- list()
+input_data <- last_observed_day
+
+cat("Avvio previsione ricorsiva per", num_days2predict, "giorni...\n")
+
+for (i in 1:num_days2predict) {
+  
+  # 1. Aggiorna Data Target
+  target_date <- unique(last_observed_day$Date) + days(i)
+  
+  input_data <- input_data %>%
+    mutate(
+      Date = target_date,
+      doy = yday(target_date),
+      time_numeric = as.numeric(target_date)
+    )
+  
+  # 2. Predizione
+  prediction <- predict(model_bam_ar, newdata = input_data, type = "response")
+  
+  # 3. Salvataggio
+  forecast_results[[i]] <- input_data %>%
+    mutate(
+      Pred_Chl = prediction,
+      Forecast_Day = i
+    ) %>%
+    select(Date, Lon, Lat, Pred_Chl, Forecast_Day)
+  
+  # 4. Aggiornamento Ricorsivo (La predizione diventa il lag di domani)
+  input_data <- input_data %>%
+    mutate(
+      Chl_lag1 = prediction 
+      # Nota: Temp_lag1 rimane costante (persistenza)
+    )
+}
+
+forecast_final <- bind_rows(forecast_results)
+```
+
+# Confronto Finale e Visualizzazione
+
+Uniamo le previsioni ricorsive ai dati reali del validation set per valutare l'accuratezza su più giorni.
+
+```{r valutazione_finale, fig.width=10, fig.height=6}
+# Join Dati Reali vs Predetti
+comparison <- val_set_ar %>%
+  select(Date, Lon, Lat, Chl_Real = Chl) %>%
+  inner_join(forecast_final, by = c("Date", "Lon", "Lat"))
+
+# Calcolo Metriche
+metrics_ar <- comparison %>%
+  group_by(Forecast_Day) %>%
+  summarise(
+    RMSE = sqrt(mean((Chl_Real - Pred_Chl)^2)),
+    MAE = mean(abs(Chl_Real - Pred_Chl))
+  )
+
+print("Metriche Modello AR per orizzonte temporale:")
+print(metrics_ar)
+
+# --- Plot Campione Casuale (9 Stazioni) ---
+set.seed(1)
+n_sample <- 9
+sampled_locs <- comparison %>% select(Lat, Lon) %>% distinct() %>% sample_n(min(n_sample, nrow(.)))
+
+plot_subset <- comparison %>%
+  inner_join(sampled_locs, by = c("Lat", "Lon")) %>%
+  mutate(Location_Label = paste0("Lat:", round(Lat, 2), " Lon:", round(Lon, 2)))
+
+ggplot(plot_subset, aes(x = Forecast_Day)) +
+  # Linea Reale
+  geom_line(aes(y = Chl_Real, color = "Reale"), linewidth = 1) +
+  geom_point(aes(y = Chl_Real, color = "Reale"), size = 2) +
+  
+  # Linea Predetta
+  geom_line(aes(y = Pred_Chl, color = "Predetto"), linetype = "dashed", linewidth = 1) +
+  geom_point(aes(y = Pred_Chl, color = "Predetto"), shape = 1, size = 2) +
+  
+  facet_wrap(~Location_Label, scales = "free_y", ncol = 3) +
+  scale_color_manual(values = c("Reale" = "black", "Predetto" = "red")) +
+  scale_x_continuous(breaks = 1:num_days2predict) +
+  labs(
+    title = paste("Forecast AR Ricorsivo -", num_days2predict, "Giorni"),
+    subtitle = "Confronto Reale (Nero) vs Predetto (Rosso) su stazioni casuali",
+    y = "Clorofilla (mg/m3)", x = "Orizzonte Temporale (Giorni)"
+  ) +
+  theme_minimal() + theme(legend.position = "bottom")
+```

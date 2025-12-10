@@ -1,0 +1,56 @@
+---
+title: "Exploratory_analysis_functional"
+author: "Leo"
+date: "2025-12-10"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+```{r libraries, include=FALSE}
+library(roahd)
+library(lubridate)
+library(dplyr)
+library(tidyverse)
+```
+
+```{r dataset implementation, include=FALSE}
+dsMERGIATO <- read.csv("/Users/leomarcellopoli/Documents/Nonparametric/Project/Non-parametric-Statistics-2025-2026/dataset/dataset_MERGIATO", header = TRUE, sep = ",")
+```
+
+```{r data preprocessing, include=FALSE}
+dsMERGIATO$uo <- NULL
+dsMERGIATO$vo <- NULL
+{#codice per trasformare data in numerico
+dsMERGIATO <- dsMERGIATO %>%
+  mutate(
+    Date = as.Date(Date),
+    Date_numeric = as.numeric(Date - as.Date("2021-12-31")) # as.Date("2021-12-31") è lo 0
+  )
+}
+```
+
+```{r functionalising data, include=FALSE}
+time_grid <- sort(unique(dsMERGIATO$Date_numeric))
+vars_to_func <- c("Lon", "Lat", "Chl", "Temp", "Salinity", "MLD", "Current_Speed", "Solar_Flux", "Heat_Flux")
+dsfunctional <- list()
+for(var_name in vars_to_func) {
+  
+  # A. Trasformazione in Matrice
+  # Usiamo dplyr::select per evitare conflitti con altri pacchetti
+  mat_wide <- dsMERGIATO %>%
+    dplyr::select(Lon, Lat, Date_numeric, all_of(var_name)) %>%
+    pivot_wider(names_from = Date_numeric, values_from = all_of(var_name)) %>%
+    dplyr::select(-Lon, -Lat) %>% # Rimuoviamo le coordinate per avere solo la matrice valori
+    as.matrix()
+  
+  # B. Creazione oggetto fData
+  dsfunctional[[var_name]] <- fData(grid = time_grid, values = mat_wide)
+  
+  cat("Variabile funzionalizzata:", var_name, "\n")
+}
+
+
+```

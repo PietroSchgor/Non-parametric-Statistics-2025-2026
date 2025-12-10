@@ -7,7 +7,7 @@ library(lubridate)
 library(parallel)
 
 # 1. Caricamento e Preparazione Dati -------------------------------------------
-df <- read_csv("dataset/dataset_MERGIATO")
+df <- read.csv("dataset/dataset_MERGIATO")
 
 
 
@@ -58,7 +58,7 @@ library(ggplot2)
 p1 <- ggplot(mappa_media, aes(x = Lon, y = Lat, fill = Mean_Chl)) +
   geom_tile() +
   scale_fill_viridis_c(option = "magma", trans = "log10", name = "Media Chl") +
-  coord_fixed(ratio = 1.3, xlim = c(12.25, 14), ylim = c(44, 45.75)) +
+  coord_fixed(ratio = 1.3, xlim = c(12, 14), ylim = c(44, 46)) +
   labs(title = "Distribuzione Media") +
   theme_minimal() +
   theme(legend.position = "bottom") # Opzionale: sposta la legenda sotto
@@ -67,7 +67,7 @@ p1 <- ggplot(mappa_media, aes(x = Lon, y = Lat, fill = Mean_Chl)) +
 p2 <- ggplot(posizioni_target, aes(x = Lon, y = Lat, fill = 1)) +
   geom_tile() +
   scale_fill_viridis_c(option = "magma", trans = "log10", name = "") +
-  coord_fixed(ratio = 1.3, xlim = c(12.25, 14), ylim = c(44, 45.75)) +
+  coord_fixed(ratio = 1.3, xlim = c(12, 14), ylim = c(44, 46)) +
   labs(title = "Posizioni filtrate") +
   theme_minimal() +
   theme(legend.position = "bottom")
@@ -85,7 +85,6 @@ data_proc <- df %>%
     time_numeric = as.numeric(Date),    # Tempo continuo per il trend
     # Creiamo un ID univoco per ogni coordinata (per il plot successivo)
   ) %>%
-  drop_na(Chl, Lat, Lon, Temp, Salinity) %>%
   arrange(Date) # È fondamentale che i dati siano ordinati temporalmente
 
 summary(df$Chl)
@@ -222,10 +221,11 @@ concurvity(model_bam, full = TRUE)
 # Calcola i residui sul training set
 residui <- residuals(model_bam)
 
+dev.off()
 # Mappa dei residui medi per zona
 ggplot(train_set, aes(x = Lon, y = Lat, color = residui)) +
   geom_point(alpha = 0.5, size = 1) +
-  scale_color_gradient2(low = "blue", mid = "white", high = "red", midpoint = 0) +
+  scale_color_gradient2(low = "darkblue", mid = "white", high = "red", midpoint = 0) +
   theme_minimal() +
   labs(title = "Mappa dei Residui (Rosso = Sottostima, Blu = Sovrastima)")
 
@@ -266,6 +266,7 @@ train_set <- data_lagged %>% filter(Date <= cutoff_date)
 val_set   <- data_lagged %>% filter(Date > cutoff_date) # Questo ci serve solo per confronto (Ground Truth)
 
 cat("Nuovo Training Set:", nrow(train_set), "righe\n")
+cat("Nuovo Validation Set:", nrow(val_set), "righe\n")
 
 
 #### --- 3. Addestramento Modello Autoregressivo --- ####
@@ -395,6 +396,7 @@ plot_subset <- comparison %>%
   # Creiamo un'etichetta leggibile per il titolo del grafico
   mutate(Location_Label = paste0("Lat: ", round(Lat, 2), " | Lon: ", round(Lon, 2)))
 
+dev.off()
 # 3. Plot con Facet Wrap
 ggplot(plot_subset, aes(x = Forecast_Day)) +
   

@@ -14,43 +14,890 @@ library(roahd)
 library(lubridate)
 library(dplyr)
 library(tidyverse)
+library(maps)
+library(ggplot2)
+library(viridis)
 ```
 
-```{r dataset implementation, include=FALSE}
+```{r dataset implementation}
 dsMERGIATO <- read.csv("/Users/leomarcellopoli/Documents/Nonparametric/Project/Non-parametric-Statistics-2025-2026/dataset/dataset_MERGIATO", header = TRUE, sep = ",")
 ```
 
-```{r data preprocessing, include=FALSE}
-dsMERGIATO$uo <- NULL
-dsMERGIATO$vo <- NULL
+```{r data preprocessing}
 {#codice per trasformare data in numerico
 dsMERGIATO <- dsMERGIATO %>%
   mutate(
     Date = as.Date(Date),
     Date_numeric = as.numeric(Date - as.Date("2021-12-31")) # as.Date("2021-12-31") è lo 0
-  )
+  ) %>%
+  select(Date_numeric, everything(), -Date)
 }
+time_grid <- sort(unique(dsMERGIATO$Date_numeric))
+coordinates <- unique(group_by(dsMERGIATO[,2:3]))
+vars_to_func <- c("Chl", "Temp", "Salinity", "MLD", "uo", "vo", "Current_Speed", "Solar_Flux", "Heat_Flux")
+coord_reference <- dsMERGIATO %>%
+  distinct(Lon, Lat) %>%
+  arrange(Lon, Lat) # Deve essere identico all'arrange usato nel pivot_wider!
+world_map <- map_data("world", region = "Italy")
 ```
+
+```{r functionalising data firstcoord_Chl}
+temporary_ds <- dsMERGIATO %>%
+  filter(Lon == coordinates$Lon[1] & Lat == coordinates$Lat[1]) %>%
+  arrange(Date_numeric) %>%
+  select(Date_numeric, all_of(vars_to_func[1]))
+fdata_Chl_FIRST_COORDINATE <- fData(grid = time_grid, values = matrix(temporary_ds$Chl, nrow = 1))
+plot(fdata_Chl_FIRST_COORDINATE, main = "Chl at first coordinate")
+```
+
+Removing the useless variables:
+
+```{r removing useless variables, include=FALSE}
+rm(temporary_ds, coordinates, fdata_Chl_FIRST_COORDINATE)
+```
+
+Ora lo facciamo per tutte le coordinate e tutte le variabili (con lo facciamo, intendo dire io e Gemini).
 
 ```{r functionalising data, include=FALSE}
-time_grid <- sort(unique(dsMERGIATO$Date_numeric))
-vars_to_func <- c("Lon", "Lat", "Chl", "Temp", "Salinity", "MLD", "Current_Speed", "Solar_Flux", "Heat_Flux")
 dsfunctional <- list()
+
 for(var_name in vars_to_func) {
+  message(paste("Elaborazione variabile:", var_name, "..."))
   
-  # A. Trasformazione in Matrice
-  # Usiamo dplyr::select per evitare conflitti con altri pacchetti
-  mat_wide <- dsMERGIATO %>%
-    dplyr::select(Lon, Lat, Date_numeric, all_of(var_name)) %>%
+  # A. Creazione della Matrice "Wide" (Righe=Stazioni, Colonne=Tempo)
+  matrice_valori <- dsMERGIATO %>%
+    
+    # Selezioniamo Coordinate, Tempo e la Variabile corrente
+    select(Lon, Lat, Date_numeric, all_of(var_name)) %>%
+    
+    # "Spalmiamo" il tempo sulle colonne
     pivot_wider(names_from = Date_numeric, values_from = all_of(var_name)) %>%
-    dplyr::select(-Lon, -Lat) %>% # Rimuoviamo le coordinate per avere solo la matrice valori
+    
+    # Ordiniamo per coordinate per garantire che la riga 1 sia sempre la stessa stazione
+    # per tutte le variabili (fondamentale per analisi multivariata successiva)
+    arrange(Lon, Lat) %>%
+    
+    # Rimuoviamo le colonne coordinate per lasciare solo la matrice numerica dei valori
+    select(-Lon, -Lat) %>%
+    
+    # Convertiamo in matrice pura
     as.matrix()
   
-  # B. Creazione oggetto fData
-  dsfunctional[[var_name]] <- fData(grid = time_grid, values = mat_wide)
+  # B. Creazione dell'oggetto fData
+  # grid: l'asse X (tempo)
+  # values: l'asse Y (la matrice dove ogni riga è una curva)
+  f_obj <- fData(grid = time_grid, values = matrice_valori)
   
-  cat("Variabile funzionalizzata:", var_name, "\n")
+  # C. Salvataggio nella lista con il nome della variabile
+  dsfunctional[[var_name]] <- f_obj
+}
+rm(var_name, matrice_valori, f_obj)
+gc()
+
+message("Fatto! Tutte le variabili sono state trasformate in oggetti funzionali.")
+```
+
+## Plot of variables during the year
+
+```{r plot curve variabili, echo = TRUE}
+for(var_name in vars_to_func) {
+  plot(dsfunctional[[var_name]], main = paste("Tutte le curve funzionali di", var_name), ylab = var_name)
+  # 2. Aggiunta linee verticali (Griglia temporale)
+  abline(v = seq(151, 516, by = 7),  # Sequenza da 151 a 516 ogni 9
+         col = "gray",               # Colore grigio
+         lty = 2,                    # Tipo di linea (2 = tratteggiata/dashed)
+         lwd = 0.5)                  # Spessore sottile
+}
+```
+
+## Divisione zone mare
+
+Plot like this mean almost nothing, it could make sense to do clustering and to indentify the coordinates relative to bathing areas. Anyway I will to some clustering in a deterministic way, by selecting the coords based on the values of the chlorophyll.
+
+# Depth measures
+
+## Chlorophyll
+
+For now we'll work only on chlorophyll, but we could extend the analysis to other variables.
+
+```{r only chlorophyll, echo=TRUE}
+fdata_Chl <- dsfunctional[["Chl"]]
+band_depth_Chl <- BD(fdata_Chl)
+modified_band_depth_Chl <- MBD(fdata_Chl)
+```
+
+```{r band depth analysis, echo=TRUE}
+which.max(band_depth_Chl)
+which.min(band_depth_Chl)
+idx_max_bd <- which.max(band_depth_Chl)
+idx_min_bd <- which.min(band_depth_Chl)
+coord_max_bd <- coord_reference[idx_max_bd, ]
+coord_min_bd <- coord_reference[idx_min_bd, ]
+print(paste("Max BD (Curva più centrale/tipica) si trova a:", coord_max_bd$Lat, coord_max_bd$Lon))
+print(paste("Min BD (Curva più atipica/outlier) si trova a:", coord_min_bd$Lat, coord_min_bd$Lon))
+{
+  # Plot di base con tutte le curve
+  plot(fdata_Chl, 
+       main = "Curva funzionale di Chl: Max (Blu) e Min (Rosso)", 
+       ylab = "Chl", 
+       ylim = c(0, max(fdata_Chl$values)),
+       col = "gray80") 
+  
+  # linea del MAX Band Depth (BLU)
+  plot(fdata_Chl[idx_max_bd], col = "blue", lwd = 3, add = TRUE)  
+  
+  # linea del MIN Band Depth (ROSSO)
+  plot(fdata_Chl[idx_min_bd], col = "red", lwd = 3, add = TRUE)
+  
+  # 2. Aggiunta linee verticali (Griglia temporale)
+  abline(v = seq(151, 516, by = 7),  # Sequenza da 151 a 516 ogni 9
+         col = "gray",               # Colore grigio
+         lty = 2,                    # Tipo di linea (2 = tratteggiata/dashed)
+         lwd = 0.5)                  # Spessore sottile
+  
+  legend("topright", legend = c("Max BD (Tipico)", "Min BD (Outlier)"),
+         col = c("blue", "red"), lwd = 3, bg = "white")
 }
 
-
+which.max(modified_band_depth_Chl)
+which.min(modified_band_depth_Chl)
+idx_max_mbd <- which.max(modified_band_depth_Chl)
+idx_min_mbd <- which.min(modified_band_depth_Chl)
+coord_max_mbd <- coord_reference[idx_max_mbd, ]
+coord_min_mbd <- coord_reference[idx_min_mbd, ]
+print(paste("Max MBD si trova a:", coord_max_mbd$Lat, coord_max_mbd$Lon))
+print(paste("Min MBD si trova a:", coord_min_mbd$Lat, coord_min_mbd$Lon))
+{
+  # Plot di base con tutte le curve
+  plot(fdata_Chl, 
+       main = "Curva funzionale di Chl: Max (Blu) e Min (Rosso)", 
+       ylab = "Chl", 
+       ylim = c(0, max(fdata_Chl$values)),
+       col = "gray80") 
+  
+  # linea del MAX Band Depth (BLU)
+  plot(fdata_Chl[idx_max_mbd], col = "blue", lwd = 3, add = TRUE)  
+  
+  # linea del MIN Band Depth (ROSSO)
+  plot(fdata_Chl[idx_min_mbd], col = "red", lwd = 3, add = TRUE)
+  
+  # 2. Aggiunta linee verticali (Griglia temporale)
+  abline(v = seq(151, 516, by = 7),  # Sequenza da 151 a 516 ogni 9
+         col = "gray",               # Colore grigio
+         lty = 2,                    # Tipo di linea (2 = tratteggiata/dashed)
+         lwd = 0.5)                  # Spessore sottile
+  
+  legend("topright", legend = c("Max MBD (Tipico)", "Min MBD (Outlier)"),
+         col = c("blue", "red"), lwd = 3, bg = "white")
+}
 ```
+
+Let's see this coordinates on the map:
+
+```{r map coordinates bd, echo=TRUE}
+# Plot veloce
+map('world', xlim = c(12, 14.5), ylim = c(44, 46), col = "gray")
+map.axes()
+
+# Aggiungi Max Depth (Il punto più "normale") in BLU
+points(coord_max_bd$Lon, coord_max_bd$Lat, col = "blue", pch = 19, cex = 2)
+text(coord_max_bd$Lon, coord_max_bd$Lat, labels = "Max BD", pos = 3, col="blue")
+
+# Aggiungi Min Depth (L'Outlier) in ROSSO
+points(coord_min_bd$Lon, coord_min_bd$Lat, col = "red", pch = 19, cex = 2)
+text(coord_min_bd$Lon, coord_min_bd$Lat, labels = "Min BD", pos = 3, col="red")
+
+title("Posizione della Curva Mediana (Blu) e dell'Outlier (Rosso)")
+
+# Plot veloce
+map('world', xlim = c(12, 14.5), ylim = c(44, 46), col = "gray")
+map.axes()
+
+# Aggiungi Max Depth (Il punto più "normale") in BLU
+points(coord_max_mbd$Lon, coord_max_mbd$Lat, col = "blue", pch = 19, cex = 2)
+text(coord_max_mbd$Lon, coord_max_mbd$Lat, labels = "Max MBD", pos = 3, col="blue")
+
+# Aggiungi Min Depth (L'Outlier) in ROSSO
+points(coord_min_mbd$Lon, coord_min_mbd$Lat, col = "red", pch = 19, cex = 2)
+text(coord_min_mbd$Lon, coord_min_mbd$Lat, labels = "Min MBD", pos = 3, col="red")
+
+title("Posizione della Curva Mediana (Blu) e dell'Outlier (Rosso)")
+```
+
+### Map of all band depth
+
+```{r map of all band depth, echo=TRUE}
+data_plot_bd <- coord_reference %>%
+  mutate(Depth_Value = band_depth_Chl)
+
+ggplot() +
+  # Sfondo grigio (Italia)
+  geom_polygon(data = world_map, aes(x = long, y = lat, group = group), 
+               fill = "lightgray", color = "white") +
+  
+  # Punti colorati in base alla Depth
+  geom_point(data = data_plot_bd, aes(x = Lon, y = Lat, color = Depth_Value), 
+             size = 2, alpha = 0.8) +
+  
+  # Scala colori: Viridis è ottima (Giallo=Alto/Centrale, Viola=Basso/Outlier)
+  scale_color_viridis_c(option = "viridis", name = "Band Depth") +
+  
+  # Focus sull'Alto Adriatico
+  coord_fixed(xlim = c(12, 14.5), ylim = c(44, 46), ratio = 1.3) +
+  
+  labs(title = "Mappa Band Depth (BD) - Clorofilla",
+       subtitle = "Giallo = Comportamento Tipico | Viola = Comportamento Anomalo",
+       x = "Longitudine", y = "Latitudine") +
+  theme_minimal()
+```
+
+### Map of all modified band depth of Chloophyll
+
+```{r map of all modified band depth, echo=TRUE}
+data_plot_mbd <- coord_reference %>%
+  mutate(Depth_Value = modified_band_depth_Chl)
+
+ggplot() +
+  # Sfondo grigio (Italia)
+  geom_polygon(data = world_map, aes(x = long, y = lat, group = group), 
+               fill = "lightgray", color = "white") +
+  
+  # Punti colorati in base alla Depth
+  geom_point(data = data_plot_mbd, aes(x = Lon, y = Lat, color = Depth_Value), 
+             size = 2, alpha = 0.8) +
+  
+  # Scala colori: Viridis è ottima (Giallo=Alto/Centrale, Viola=Basso/Outlier)
+  scale_color_viridis_c(option = "viridis", name = "Modified Band Depth") +
+  
+  # Focus sull'Alto Adriatico
+  coord_fixed(xlim = c(12, 14.5), ylim = c(44, 46), ratio = 1.3) +
+  
+  labs(title = "Mappa Modified Band Depth (MBD) - Clorofilla",
+       subtitle = "Giallo = Comportamento Tipico | Viola = Comportamento Anomalo",
+       x = "Longitudine", y = "Latitudine") +
+  theme_minimal()
+```
+
+## Temperature
+
+Now we'll switch to analysing **Temperature**
+
+```{r only temperature, echo=TRUE}
+fdata_Temp <- dsfunctional[["Temp"]]
+modified_band_depth_Temp <- MBD(fdata_Temp)
+```
+
+```{r band depth analysis temperature, echo=TRUE}
+# Identificazione indici Max e Min
+idx_max_mbd <- which.max(modified_band_depth_Temp)
+idx_min_mbd <- which.min(modified_band_depth_Temp)
+
+# Coordinate corrispondenti
+coord_max_mbd <- coord_reference[idx_max_mbd, ]
+coord_min_mbd <- coord_reference[idx_min_mbd, ]
+
+# Print coordinate
+print(paste("Max MBD (Temp) si trova a:", coord_max_mbd$Lat, coord_max_mbd$Lon))
+print(paste("Min MBD (Temp) si trova a:", coord_min_mbd$Lat, coord_min_mbd$Lon))
+
+# Plot delle curve
+# Uso range() per ylim per adattarmi alla scala della temperatura
+y_limits <- range(fdata_Temp$values) 
+
+{
+  # Plot di base con tutte le curve
+  plot(fdata_Temp, 
+       main = "Curva funzionale di Temp: Max (Blu) e Min (Rosso)", 
+       ylab = "Temp", 
+       ylim = c(0, max(fdata_Temp$values)),
+       col = "gray80") 
+  
+  # linea del MAX Band Depth (BLU)
+  plot(fdata_Temp[idx_max_mbd], col = "blue", lwd = 3, add = TRUE)  
+  
+  # linea del MIN Band Depth (ROSSO)
+  plot(fdata_Temp[idx_min_mbd], col = "red", lwd = 3, add = TRUE)
+  
+  # 2. Aggiunta linee verticali (Griglia temporale)
+  abline(v = seq(151, 516, by = 7),  # Sequenza da 151 a 516 ogni 9
+         col = "gray",               # Colore grigio
+         lty = 2,                    # Tipo di linea (2 = tratteggiata/dashed)
+         lwd = 0.5)                  # Spessore sottile
+  
+  legend("topright", legend = c("Max BD (Tipico)", "Min BD (Outlier)"),
+         col = c("blue", "red"), lwd = 3, bg = "white")
+}
+```
+
+Map of all modified band depth for Temperature
+
+```{r map of all modified band depth temperature, echo=TRUE}
+# Plot veloce statico
+map('world', xlim = c(12, 14.5), ylim = c(44, 46), col = "gray")
+map.axes()
+
+# Aggiungi Max MBD (Il punto più "normale") in BLU
+points(coord_max_mbd$Lon, coord_max_mbd$Lat, col = "blue", pch = 19, cex = 2)
+text(coord_max_mbd$Lon, coord_max_mbd$Lat, labels = "Max MBD", pos = 3, col="blue")
+
+# Aggiungi Min MBD (L'Outlier) in ROSSO
+points(coord_min_mbd$Lon, coord_min_mbd$Lat, col = "red", pch = 19, cex = 2)
+text(coord_min_mbd$Lon, coord_min_mbd$Lat, labels = "Min MBD", pos = 3, col="red")
+
+title("Temp: Posizione Curva Mediana (Blu) e Outlier (Rosso)")
+```
+
+### Map of all modified band depth for Temperature
+
+```{r map of all modified band depth temperature ggplot, echo=TRUE}
+# Creazione dataframe per ggplot specifico per Temp
+data_plot_mbd_temp <- coord_reference %>%
+  mutate(Depth_Value = modified_band_depth_Temp)
+
+ggplot() +
+  # Sfondo grigio (Italia) - usa world_map già caricato in precedenza
+  geom_polygon(data = world_map, aes(x = long, y = lat, group = group), 
+               fill = "lightgray", color = "white") +
+  
+  # Punti colorati in base alla MBD della Temperatura
+  geom_point(data = data_plot_mbd_temp, aes(x = Lon, y = Lat, color = Depth_Value), 
+             size = 2, alpha = 0.8) +
+  
+  # Scala colori Viridis
+  scale_color_viridis_c(option = "viridis", name = "MBD Temp") +
+  
+  # Focus sull'Alto Adriatico
+  coord_fixed(xlim = c(12, 14.5), ylim = c(44, 46), ratio = 1.3) +
+  
+  labs(title = "Mappa Modified Band Depth (MBD) - Temperatura",
+       subtitle = "Giallo = Comportamento Tipico | Viola = Comportamento Anomalo",
+       x = "Longitudine", y = "Latitudine") +
+  theme_minimal()
+```
+
+## Salinity
+
+Now we'll switch to analysing **Salinity**
+
+```{r only salinity, echo=TRUE}
+fdata_Salinity <- dsfunctional[["Salinity"]]
+modified_band_depth_Salinity <- MBD(fdata_Salinity)
+```
+
+```{r band depth analysis salinity, echo=TRUE}
+# Identificazione indici Max e Min
+idx_max_mbd <- which.max(modified_band_depth_Salinity)
+idx_min_mbd <- which.min(modified_band_depth_Salinity)
+
+# Coordinate corrispondenti
+coord_max_mbd <- coord_reference[idx_max_mbd, ]
+coord_min_mbd <- coord_reference[idx_min_mbd, ]
+
+# Print coordinate
+print(paste("Max MBD (Salinity) si trova a:", coord_max_mbd$Lat, coord_max_mbd$Lon))
+print(paste("Min MBD (Salinity) si trova a:", coord_min_mbd$Lat, coord_min_mbd$Lon))
+
+# Plot delle curve
+# Uso range() per ylim per adattarmi alla scala della salinità
+y_limits <- range(fdata_Salinity$values) 
+
+{
+  # Plot di base con tutte le curve
+  plot(fdata_Salinity, 
+       main = "Curva funzionale di Salinity: Max (Blu) e Min (Rosso)", 
+       ylab = "Salinity", 
+       ylim = c(min(fdata_Salinity$values), max(fdata_Salinity$values)),
+       col = "gray80") 
+  
+  # linea del MAX Band Depth (BLU)
+  plot(fdata_Salinity[idx_max_mbd], col = "blue", lwd = 3, add = TRUE)  
+  
+  # linea del MIN Band Depth (ROSSO)
+  plot(fdata_Salinity[idx_min_mbd], col = "red", lwd = 3, add = TRUE)
+  
+  # 2. Aggiunta linee verticali (Griglia temporale)
+  abline(v = seq(151, 516, by = 7),  # Sequenza da 151 a 516 ogni 9
+         col = "gray",               # Colore grigio
+         lty = 2,                    # Tipo di linea (2 = tratteggiata/dashed)
+         lwd = 0.5)                  # Spessore sottile
+  
+  legend("topright", legend = c("Max BD (Tipico)", "Min BD (Outlier)"),
+         col = c("blue", "red"), lwd = 3, bg = "white")
+}
+```
+
+Map of all modified band depth for Salinity
+
+```{r map of all modified band depth salinity, echo=TRUE}
+# Plot veloce statico
+map('world', xlim = c(12, 14.5), ylim = c(44, 46), col = "gray")
+map.axes()
+
+# Aggiungi Max MBD (Il punto più "normale") in BLU
+points(coord_max_mbd$Lon, coord_max_mbd$Lat, col = "blue", pch = 19, cex = 2)
+text(coord_max_mbd$Lon, coord_max_mbd$Lat, labels = "Max MBD", pos = 3, col="blue")
+
+# Aggiungi Min MBD (L'Outlier) in ROSSO
+points(coord_min_mbd$Lon, coord_min_mbd$Lat, col = "red", pch = 19, cex = 2)
+text(coord_min_mbd$Lon, coord_min_mbd$Lat, labels = "Min MBD", pos = 3, col="red")
+
+title("Salinity: Posizione Curva Mediana (Blu) e Outlier (Rosso)")
+```
+
+### Map of all modified band depth for Salinity
+
+```{r map of all modified band depth salinity ggplot, echo=TRUE}
+# Creazione dataframe per ggplot specifico per Salinity
+data_plot_mbd_salinity <- coord_reference %>%
+  mutate(Depth_Value = modified_band_depth_Salinity)
+
+ggplot() +
+  # Sfondo grigio (Italia) - usa world_map già caricato in precedenza
+  geom_polygon(data = world_map, aes(x = long, y = lat, group = group), 
+               fill = "lightgray", color = "white") +
+  
+  # Punti colorati in base alla MBD della Salinità
+  geom_point(data = data_plot_mbd_salinity, aes(x = Lon, y = Lat, color = Depth_Value), 
+             size = 2, alpha = 0.8) +
+  
+  # Scala colori Viridis
+  scale_color_viridis_c(option = "viridis", name = "MBD Salinity") +
+  
+  # Focus sull'Alto Adriatico
+  coord_fixed(xlim = c(12, 14.5), ylim = c(44, 46), ratio = 1.3) +
+  
+  labs(title = "Mappa Modified Band Depth (MBD) - Salinity",
+       subtitle = "Giallo = Comportamento Tipico | Viola = Comportamento Anomalo",
+       x = "Longitudine", y = "Latitudine") +
+  theme_minimal()
+```
+
+## Mixed Layer Depth
+
+Now we'll switch to analysing **MLD**
+
+```{r only MLD, echo=TRUE}
+# Estrazione dati funzionali MLD
+fdata_MLD <- dsfunctional[["MLD"]]
+
+# Calcolo SOLO Modified Band Depth (MBD)
+modified_band_depth_MLD <- MBD(fdata_MLD)
+```
+
+```{r band depth analysis MLD, echo=TRUE}
+# Identificazione indici Max e Min
+idx_max_mbd <- which.max(modified_band_depth_MLD)
+idx_min_mbd <- which.min(modified_band_depth_MLD)
+
+# Coordinate corrispondenti
+coord_max_mbd <- coord_reference[idx_max_mbd, ]
+coord_min_mbd <- coord_reference[idx_min_mbd, ]
+
+# Print coordinate
+print(paste("Max MBD (MLD) si trova a:", coord_max_mbd$Lat, coord_max_mbd$Lon))
+print(paste("Min MBD (MLD) si trova a:", coord_min_mbd$Lat, coord_min_mbd$Lon))
+
+# Plot delle curve
+# Uso range() per ylim per adattarmi alla scala della MLD
+y_limits <- range(fdata_MLD$values) 
+
+{
+  # Plot di base con tutte le curve
+  plot(fdata_MLD, 
+       main = "Curva funzionale di MLD: Max (Blu) e Min (Rosso)", 
+       ylab = "MLD", 
+       ylim = c(0, max(fdata_MLD$values)),
+       col = "gray80") 
+  
+  # linea del MAX Band Depth (BLU)
+  plot(fdata_MLD[idx_max_mbd], col = "blue", lwd = 3, add = TRUE)  
+  
+  # linea del MIN Band Depth (ROSSO)
+  plot(fdata_MLD[idx_min_mbd], col = "red", lwd = 3, add = TRUE)
+  
+  # 2. Aggiunta linee verticali (Griglia temporale)
+  abline(v = seq(151, 516, by = 7),  # Sequenza da 151 a 516 ogni 9
+         col = "gray",               # Colore grigio
+         lty = 2,                    # Tipo di linea (2 = tratteggiata/dashed)
+         lwd = 0.5)                  # Spessore sottile
+  
+  legend("topright", legend = c("Max BD (Tipico)", "Min BD (Outlier)"),
+         col = c("blue", "red"), lwd = 3, bg = "white")
+}
+```
+
+Map of all modified band depth for MLD
+
+```{r map of all modified band depth MLD, echo=TRUE}
+# Plot veloce statico
+map('world', xlim = c(12, 14.5), ylim = c(44, 46), col = "gray")
+map.axes()
+
+# Aggiungi Max MBD (Il punto più "normale") in BLU
+points(coord_max_mbd$Lon, coord_max_mbd$Lat, col = "blue", pch = 19, cex = 2)
+text(coord_max_mbd$Lon, coord_max_mbd$Lat, labels = "Max MBD", pos = 3, col="blue")
+
+# Aggiungi Min MBD (L'Outlier) in ROSSO
+points(coord_min_mbd$Lon, coord_min_mbd$Lat, col = "red", pch = 19, cex = 2)
+text(coord_min_mbd$Lon, coord_min_mbd$Lat, labels = "Min MBD", pos = 3, col="red")
+
+title("MLD: Posizione Curva Mediana (Blu) e Outlier (Rosso)")
+```
+
+### Map of all modified band depth for MLD
+
+```{r map of all modified band depth MLD ggplot, echo=TRUE}
+# Creazione dataframe per ggplot specifico per MLD
+data_plot_mbd_mld <- coord_reference %>%
+  mutate(Depth_Value = modified_band_depth_MLD)
+
+ggplot() +
+  # Sfondo grigio (Italia) - usa world_map già caricato in precedenza
+  geom_polygon(data = world_map, aes(x = long, y = lat, group = group), 
+               fill = "lightgray", color = "white") +
+  
+  # Punti colorati in base alla MBD della MLD
+  geom_point(data = data_plot_mbd_mld, aes(x = Lon, y = Lat, color = Depth_Value), 
+             size = 2, alpha = 0.8) +
+  
+  # Scala colori Viridis
+  scale_color_viridis_c(option = "viridis", name = "MBD MLD") +
+  
+  # Focus sull'Alto Adriatico
+  coord_fixed(xlim = c(12, 14.5), ylim = c(44, 46), ratio = 1.3) +
+  
+  labs(title = "Mappa Modified Band Depth (MBD) - MLD",
+       subtitle = "Giallo = Comportamento Tipico | Viola = Comportamento Anomalo",
+       x = "Longitudine", y = "Latitudine") +
+  theme_minimal()
+```
+
+## Current Speed
+
+Now we'll switch to analysing **Current Speed**
+
+```{r only Current Speed, echo=TRUE}
+# Estrazione dati funzionali Current_Speed
+fdata_CS <- dsfunctional[["Current_Speed"]]
+
+# Calcolo SOLO Modified Band Depth (MBD)
+modified_band_depth_CS <- MBD(fdata_CS)
+```
+
+```{r band depth analysis Current Speed, echo=TRUE}
+# Identificazione indici Max e Min
+idx_max_mbd <- which.max(modified_band_depth_CS)
+idx_min_mbd <- which.min(modified_band_depth_CS)
+
+# Coordinate corrispondenti
+coord_max_mbd <- coord_reference[idx_max_mbd, ]
+coord_min_mbd <- coord_reference[idx_min_mbd, ]
+
+# Print coordinate
+print(paste("Max MBD (Current Speed) si trova a:", coord_max_mbd$Lat, coord_max_mbd$Lon))
+print(paste("Min MBD (Current Speed) si trova a:", coord_min_mbd$Lat, coord_min_mbd$Lon))
+
+# Plot delle curve
+# Uso range() per essere sicuro di coprire min e max corretti
+y_limits <- range(fdata_CS$values) 
+
+{
+  # Plot di base con tutte le curve
+  plot(fdata_CS, 
+       main = "Curva funzionale di Current Speed: Max (Blu) e Min (Rosso)", 
+       ylab = "Current Speed", 
+       ylim = y_limits,
+       col = "gray80") 
+  
+  # linea del MAX Band Depth (BLU)
+  plot(fdata_CS[idx_max_mbd], col = "blue", lwd = 3, add = TRUE)  
+  
+  # linea del MIN Band Depth (ROSSO)
+  plot(fdata_CS[idx_min_mbd], col = "red", lwd = 3, add = TRUE)
+  
+  # 2. Aggiunta linee verticali (Griglia temporale)
+  abline(v = seq(151, 516, by = 7),  # Sequenza da 151 a 516 ogni 9
+         col = "gray",               # Colore grigio
+         lty = 2,                    # Tipo di linea (2 = tratteggiata)
+         lwd = 0.5)                  # Spessore sottile
+  
+  legend("topright", legend = c("Max BD (Tipico)", "Min BD (Outlier)"),
+         col = c("blue", "red"), lwd = 3, bg = "white")
+}
+```
+
+Map of all modified band depth for Current Speed
+
+```{r map of all modified band depth Current Speed, echo=TRUE}
+# Plot veloce statico
+map('world', xlim = c(12, 14.5), ylim = c(44, 46), col = "gray")
+map.axes()
+
+# Aggiungi Max MBD (Il punto più "normale") in BLU
+points(coord_max_mbd$Lon, coord_max_mbd$Lat, col = "blue", pch = 19, cex = 2)
+text(coord_max_mbd$Lon, coord_max_mbd$Lat, labels = "Max MBD", pos = 3, col="blue")
+
+# Aggiungi Min MBD (L'Outlier) in ROSSO
+points(coord_min_mbd$Lon, coord_min_mbd$Lat, col = "red", pch = 19, cex = 2)
+text(coord_min_mbd$Lon, coord_min_mbd$Lat, labels = "Min MBD", pos = 3, col="red")
+
+title("Current Speed: Posizione Curva Mediana (Blu) e Outlier (Rosso)")
+```
+
+### Map of all modified band depth for Current Speed
+
+```{r map of all modified band depth Current Speed ggplot, echo=TRUE}
+# Creazione dataframe per ggplot specifico per Current Speed
+data_plot_mbd_cs <- coord_reference %>%
+  mutate(Depth_Value = modified_band_depth_CS)
+
+ggplot() +
+  # Sfondo grigio (Italia) - usa world_map già caricato in precedenza
+  geom_polygon(data = world_map, aes(x = long, y = lat, group = group), 
+               fill = "lightgray", color = "white") +
+  
+  # Punti colorati in base alla MBD della Current Speed
+  geom_point(data = data_plot_mbd_cs, aes(x = Lon, y = Lat, color = Depth_Value), 
+             size = 2, alpha = 0.8) +
+  
+  # Scala colori Viridis
+  scale_color_viridis_c(option = "viridis", name = "MBD Current Speed") +
+  
+  # Focus sull'Alto Adriatico
+  coord_fixed(xlim = c(12, 14.5), ylim = c(44, 46), ratio = 1.3) +
+  
+  labs(title = "Mappa Modified Band Depth (MBD) - Current Speed",
+       subtitle = "Giallo = Comportamento Tipico | Viola = Comportamento Anomalo",
+       x = "Longitudine", y = "Latitudine") +
+  theme_minimal()
+```
+
+## Solar Flux
+
+Now we'll switch to analysing **Solar Flux**
+
+```{r only Solar Flux, echo=TRUE}
+# Estrazione dati funzionali Solar_Flux
+fdata_SF <- dsfunctional[["Solar_Flux"]]
+
+# Calcolo SOLO Modified Band Depth (MBD)
+modified_band_depth_SF <- MBD(fdata_SF)
+```
+
+```{r band depth analysis Solar Flux, echo=TRUE}
+# Identificazione indici Max e Min
+idx_max_mbd <- which.max(modified_band_depth_SF)
+idx_min_mbd <- which.min(modified_band_depth_SF)
+
+# Coordinate corrispondenti
+coord_max_mbd <- coord_reference[idx_max_mbd, ]
+coord_min_mbd <- coord_reference[idx_min_mbd, ]
+
+# Print coordinate
+print(paste("Max MBD (Solar Flux) si trova a:", coord_max_mbd$Lat, coord_max_mbd$Lon))
+print(paste("Min MBD (Solar Flux) si trova a:", coord_min_mbd$Lat, coord_min_mbd$Lon))
+
+# Plot delle curve
+# Uso range() per essere sicuro di coprire min e max corretti
+y_limits <- range(fdata_SF$values) 
+
+{
+  # Plot di base con tutte le curve
+  plot(fdata_SF, 
+       main = "Curva funzionale di Solar Flux: Max (Blu) e Min (Rosso)", 
+       ylab = "Solar Flux", 
+       ylim = y_limits,
+       col = "gray80") 
+  
+  # linea del MAX Band Depth (BLU)
+  plot(fdata_SF[idx_max_mbd], col = "blue", lwd = 3, add = TRUE)  
+  
+  # linea del MIN Band Depth (ROSSO)
+  plot(fdata_SF[idx_min_mbd], col = "red", lwd = 3, add = TRUE)
+  
+  # 2. Aggiunta linee verticali (Griglia temporale)
+  abline(v = seq(151, 516, by = 7),  # Sequenza da 151 a 516 ogni 9
+         col = "gray",               # Colore grigio
+         lty = 2,                    # Tipo di linea (2 = tratteggiata)
+         lwd = 0.5)                  # Spessore sottile
+  
+  legend("topright", legend = c("Max BD (Tipico)", "Min BD (Outlier)"),
+         col = c("blue", "red"), lwd = 3, bg = "white")
+}
+```
+
+Map of all modified band depth for Solar Flux
+
+```{r map of all modified band depth Solar Flux, echo=TRUE}
+# Plot veloce statico
+map('world', xlim = c(12, 14.5), ylim = c(44, 46), col = "gray")
+map.axes()
+
+# Aggiungi Max MBD (Il punto più "normale") in BLU
+points(coord_max_mbd$Lon, coord_max_mbd$Lat, col = "blue", pch = 19, cex = 2)
+text(coord_max_mbd$Lon, coord_max_mbd$Lat, labels = "Max MBD", pos = 3, col="blue")
+
+# Aggiungi Min MBD (L'Outlier) in ROSSO
+points(coord_min_mbd$Lon, coord_min_mbd$Lat, col = "red", pch = 19, cex = 2)
+text(coord_min_mbd$Lon, coord_min_mbd$Lat, labels = "Min MBD", pos = 3, col="red")
+
+title("Solar Flux: Posizione Curva Mediana (Blu) e Outlier (Rosso)")
+```
+
+### Map of all modified band depth for Solar Flux
+
+```{r map of all modified band depth Solar Flux ggplot, echo=TRUE}
+# Creazione dataframe per ggplot specifico per Solar Flux
+data_plot_mbd_sf <- coord_reference %>%
+  mutate(Depth_Value = modified_band_depth_SF)
+
+ggplot() +
+  # Sfondo grigio (Italia) - usa world_map già caricato in precedenza
+  geom_polygon(data = world_map, aes(x = long, y = lat, group = group), 
+               fill = "lightgray", color = "white") +
+  
+  # Punti colorati in base alla MBD del Solar Flux
+  geom_point(data = data_plot_mbd_sf, aes(x = Lon, y = Lat, color = Depth_Value), 
+             size = 2, alpha = 0.8) +
+  
+  # Scala colori Viridis
+  scale_color_viridis_c(option = "viridis", name = "MBD Solar Flux") +
+  
+  # Focus sull'Alto Adriatico
+  coord_fixed(xlim = c(12, 14.5), ylim = c(44, 46), ratio = 1.3) +
+  
+  labs(title = "Mappa Modified Band Depth (MBD) - Solar Flux",
+       subtitle = "Giallo = Comportamento Tipico | Viola = Comportamento Anomalo",
+       x = "Longitudine", y = "Latitudine") +
+  theme_minimal()
+```
+
+## Heat Flux
+
+Now we'll switch to analysing **Heat Flux**
+
+```{r only Heat Flux, echo=TRUE}
+# Estrazione dati funzionali Heat_Flux
+fdata_HF <- dsfunctional[["Heat_Flux"]]
+
+# Calcolo SOLO Modified Band Depth (MBD)
+modified_band_depth_HF <- MBD(fdata_HF)
+```
+
+```{r band depth analysis Heat Flux, echo=TRUE}
+# Identificazione indici Max e Min
+idx_max_mbd <- which.max(modified_band_depth_HF)
+idx_min_mbd <- which.min(modified_band_depth_HF)
+
+# Coordinate corrispondenti
+coord_max_mbd <- coord_reference[idx_max_mbd, ]
+coord_min_mbd <- coord_reference[idx_min_mbd, ]
+
+# Print coordinate
+print(paste("Max MBD (Heat Flux) si trova a:", coord_max_mbd$Lat, coord_max_mbd$Lon))
+print(paste("Min MBD (Heat Flux) si trova a:", coord_min_mbd$Lat, coord_min_mbd$Lon))
+
+# Plot delle curve
+# Uso range() per essere sicuro di coprire min e max (Heat Flux può essere negativo)
+y_limits <- range(fdata_HF$values) 
+
+{
+  # Plot di base con tutte le curve
+  plot(fdata_HF, 
+       main = "Curva funzionale di Heat Flux: Max (Blu) e Min (Rosso)", 
+       ylab = "Heat Flux", 
+       ylim = y_limits,
+       col = "gray80") 
+  
+  # linea del MAX Band Depth (BLU)
+  plot(fdata_HF[idx_max_mbd], col = "blue", lwd = 3, add = TRUE)  
+  
+  # linea del MIN Band Depth (ROSSO)
+  plot(fdata_HF[idx_min_mbd], col = "red", lwd = 3, add = TRUE)
+  
+  # 2. Aggiunta linee verticali (Griglia temporale)
+  abline(v = seq(151, 516, by = 9),  # Sequenza da 151 a 516 ogni 9
+         col = "gray",               # Colore grigio
+         lty = 2,                    # Tipo di linea (2 = tratteggiata)
+         lwd = 0.5)                  # Spessore sottile
+  
+  legend("topright", legend = c("Max BD (Tipico)", "Min BD (Outlier)"),
+         col = c("blue", "red"), lwd = 3, bg = "white")
+}
+```
+
+Map of all modified band depth for Heat Flux
+
+```{r map of all modified band depth Heat Flux, echo=TRUE}
+# Plot veloce statico
+map('world', xlim = c(12, 14.5), ylim = c(44, 46), col = "gray")
+map.axes()
+
+# Aggiungi Max MBD (Il punto più "normale") in BLU
+points(coord_max_mbd$Lon, coord_max_mbd$Lat, col = "blue", pch = 19, cex = 2)
+text(coord_max_mbd$Lon, coord_max_mbd$Lat, labels = "Max MBD", pos = 3, col="blue")
+
+# Aggiungi Min MBD (L'Outlier) in ROSSO
+points(coord_min_mbd$Lon, coord_min_mbd$Lat, col = "red", pch = 19, cex = 2)
+text(coord_min_mbd$Lon, coord_min_mbd$Lat, labels = "Min MBD", pos = 3, col="red")
+
+title("Heat Flux: Posizione Curva Mediana (Blu) e Outlier (Rosso)")
+```
+
+### Map of all modified band depth for Heat Flux
+
+```{r map of all modified band depth Heat Flux ggplot, echo=TRUE}
+# Creazione dataframe per ggplot specifico per Heat Flux
+data_plot_mbd_hf <- coord_reference %>%
+  mutate(Depth_Value = modified_band_depth_HF)
+
+ggplot() +
+  # Sfondo grigio (Italia) - usa world_map già caricato in precedenza
+  geom_polygon(data = world_map, aes(x = long, y = lat, group = group), 
+               fill = "lightgray", color = "white") +
+  
+  # Punti colorati in base alla MBD del Heat Flux
+  geom_point(data = data_plot_mbd_hf, aes(x = Lon, y = Lat, color = Depth_Value), 
+             size = 2, alpha = 0.8) +
+  
+  # Scala colori Viridis
+  scale_color_viridis_c(option = "viridis", name = "MBD Heat Flux") +
+  
+  # Focus sull'Alto Adriatico
+  coord_fixed(xlim = c(12, 14.5), ylim = c(44, 46), ratio = 1.3) +
+  
+  labs(title = "Mappa Modified Band Depth (MBD) - Heat Flux",
+       subtitle = "Giallo = Comportamento Tipico | Viola = Comportamento Anomalo",
+       x = "Longitudine", y = "Latitudine") +
+  theme_minimal()
+```
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+

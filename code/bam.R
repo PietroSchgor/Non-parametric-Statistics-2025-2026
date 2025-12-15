@@ -9,7 +9,10 @@ library(parallel)
 # 1. Caricamento e Preparazione Dati -------------------------------------------
 df <- read.csv("dataset/dataset_MERGIATO")
 
-
+summary(df)
+summary(df$Chl)
+Chl <- log((df$Chl +1)*1.5)
+summary(Chl)
 
 library(ggplot2)
 library(dplyr)
@@ -31,6 +34,10 @@ ggplot(mappa_media, aes(x = Lon, y = Lat, fill = Mean_Chl)) +
 #### 2. Logica di filtraggio ####
 
 summary(df$Chl)
+# summary(df$Chl)
+# Min.  1st Qu.   Median     Mean  3rd Qu.     Max. 
+# 0.02871  0.11508  0.25781  0.42489  0.54657 11.23414 
+
 # Vogliamo raggruppare per posizione e contare i giorni con Chl > 0.5
 posizioni_target <- df %>%
   group_by(Lat, Lon) %>%
@@ -81,7 +88,8 @@ data_proc <- df %>%
   inner_join(posizioni_target, by = c("Lat", "Lon")) %>%
   mutate(
     Date = ymd(Date),
-    doy = yday(Date),                   # Giorno dell'anno (1-365)
+    doy = yday(Date),# Giorno dell'anno (1-365)
+    dow = as.factor(wday(Date)),
     time_numeric = as.numeric(Date),    # Tempo continuo per il trend
     # Creiamo un ID univoco per ogni coordinata (per il plot successivo)
   ) %>%
@@ -89,6 +97,12 @@ data_proc <- df %>%
 
 summary(df$Chl)
 summary(data_proc$Chl)
+hist(data_proc$Chl, xlim = c(0, 5))
+Chl <- log((data_proc$Chl*5 + 1))
+summary(Chl)
+hist(Chl, xlim = c(0, 5))
+#data_proc$Chl <- Chl
+
 
 # prendo un subset per velocizzare i tempi
 
@@ -99,21 +113,34 @@ summary(data_proc$Chl)
 # summary(df$Lat)
 # Min. 1st Qu.  Median    Mean 3rd Qu.    Max. 
 # 44.02   44.35   44.73   44.76   45.15   45.73
-#data_proc <- data_proc[which(data_proc$Lat <= 44.73), ]
+data_45 <- data_proc[which(data_proc$Lat >= 45), ]
+
+
+par(mfrow=c(1,2))
+summary(data_45$Chl)
+hist(data_45$Chl, xlim = c(0, 4))
+Chl <- log((data_45$Chl*5 +1))
+summary(Chl)
+hist(Chl, xlim = c(0, 4))
+par(mfrow=c(1,1))
+
+data_45$Chl_LOG <- Chl
+
+
 
 # 2. Creazione Training e Validation Set (Ultima Settimana) --------------------
 # Identifichiamo la data massima
 num_days2predict = 3
 
-max_date <- max(data_proc$Date)
+max_date <- max(data_45$Date)
 cutoff_date <- max_date - days(num_days2predict)
 
 cat("Data finale nel dataset:", as.character(max_date), "\n")
 cat("Data di taglio (inizio validation):", as.character(cutoff_date), "\n")
 
 # Splitting Temporale
-train_set <- data_proc %>% filter(Date <= cutoff_date)
-val_set   <- data_proc %>% filter(Date > cutoff_date)
+train_set <- data_45 %>% filter(Date <= cutoff_date)
+val_set   <- data_45 %>% filter(Date > cutoff_date)
 
 cat("Righe Training Set:", nrow(train_set), "\n")
 cat("Righe Validation Set:", nrow(val_set), "\n")
@@ -144,7 +171,7 @@ model_bam <- bam(
   discrete = TRUE,     # Ottimizzazione essenziale per velocità
   nthreads = n_cores,  # Calcolo parallelo
   chunk.size = 10000,
-  family =Gamma(link="log") #scat(link = "identity") Gamma(link="log"), #scat
+  family = scat(link = "identity") #Gamma(link="log") Gamma(link="log"), #scat
   #rho = .7
 )
 
@@ -242,12 +269,12 @@ acf(residuals(model_bam), main = "Autocorrelazione dei Residui")
 
 #### --- 1. Feature Engineering: Creazione Lag --- ####
 # Ordiniamo per posizione e data per essere sicuri che il 'lag' prenda il giorno prima
-data_lagged <- data_proc %>%
+data_lagged <- data_45 %>%
   arrange(Lon, Lat, Date) %>%
   group_by(Lon, Lat) %>%
   mutate(
     # Variabili Autoregressive (Valori del giorno precedente)
-    Chl_lag1      = lag(Chl, 1),
+    Chl_lag1      = lag(Chl_LOG, 1),
     Temp_lag1     = lag(Temp, 1),
     Salinity_lag1 = lag(Salinity, 1),
     MLD_lag1      = lag(MLD, 1),
@@ -271,33 +298,33 @@ cat("Nuovo Validation Set:", nrow(val_set), "righe\n")
 
 #### --- 3. Addestramento Modello Autoregressivo --- ####
 
-weights_vec <- (exp(train_set$Chl*.3) - 1)*.5
-summary(weights_vec)
-summary(train_set$Chl)
+# weights_vec <- (exp(train_set$Chl*.3) - 1)*.5
+# summary(weights_vec)
+# summary(train_set$Chl)
 
 model_bam_ar <- bam(
   Chl ~ 
-    # 1. Autoregressione sulla Clorofilla (Fondamentale)
-    s(Chl_lag1, k=20) +
-    
-    # 2. Autoregressione sulle Covariate Ambientali
-    s(Temp_lag1, k=20) + 
-    #s(Salinity_lag1, k=8) + 
-    #s(MLD_lag1, k=8) + 
-    #s(Solar_lag1, k=15) +
-    
-    # 3. Componenti Spazio-Temporali (Queste NON vanno laggate, perché sappiamo che giorno è domani)
-    te(Lon, Lat, doy, d=c(2,1), bs =c("tp", "cc"), k=c(20, 20)),
+    # --- MODIFICA FONDAMENTALE ---
+    dow +                    # Effetto base (intercetta) per ogni giorno
+    s(Chl_lag1, k=15, by = dow) +  # Curva della Chl specifica per ogni giorno
+    # -----------------------------
+  
+  # 2. Autoregressione sulle Covariate Ambientali (commentate nel tuo codice)
+  # s(Salinity_lag1, k=8) + 
+  # ...
+  s(Temp_lag1, k=15, bs="cc") +
+  
+  # 3. Componenti Spazio-Temporali
+  te(Lon, Lat, doy, d=c(2,1), bs =c("tp", "cc"), k=c(10, 20)),
   
   data = train_set,
   method = "fREML",
   discrete = TRUE,
   nthreads = n_cores,
   chunk.size = 10000,
-  weights = weights_vec,
-  family = tw(link = "log") 
+  #weights = weights_vec,
+  family = scat(link = "identity") 
 )
-
 summary(model_bam_ar)
 
 #### --- 4. Forecasting Ricorsivo a 3 step --- ####
@@ -450,3 +477,198 @@ ggplot(train_set, aes(x = Lon, y = Lat, color = residui)) +
 # Calcola l'autocorrelazione dei residui
 par(mfrow=c(1,1))
 acf(residuals(model_bam_ar), main = "Autocorrelazione dei Residui")
+
+
+
+
+
+# ARIMA -------------------------------------------------------------------
+
+# --- 1. Caricamento Librerie ---
+library(forecast)    # Il motore principale per ARIMA
+library(tseries)     # Per i test di stazionarietà
+library(tidyverse)   # Per manipolazione dati
+library(imputeTS)    # FONDAMENTALE: Per riempire i buchi nei dati della clorofilla
+
+# coordinate bibione: 45.630, 13.045
+pos_bibione <- posizioni_target %>% 
+  filter(near(Lat, 45.630, tol = .03), near(Lon, 13.044, tol = .03))
+
+
+# --- 0. Pre-processing e Ordinamento ---
+# È cruciale che i dati siano ordinati per tempo prima di tagliare
+# Assumiamo che la colonna della data si chiami 'Date' o 'time' (adattalo al tuo df)
+data_bibione <- data_bibione %>% 
+  arrange(Date) 
+
+# Definiamo le dimensioni dei set
+n_valid <- 7   # Ultima settimana
+n_train <- 30  # 30 giorni precedenti
+
+# Calcoliamo gli indici di taglio
+tot_rows <- nrow(data_bibione)
+start_valid <- tot_rows - n_valid + 1
+end_train <- start_valid - 1
+start_train <- end_train - n_train + 1
+
+# Controlliamo di avere abbastanza dati
+if (start_train < 1) {
+  stop("Errore: Il dataset è troppo corto per prendere 30 giorni di training + 7 di validation.")
+}
+
+# --- 1. Split Training e Validation ---
+train_set <- data_bibione[start_train:end_train, ]
+valid_set <- data_bibione[start_valid:tot_rows, ]
+
+print(paste("Training set:", min(train_set$Date), "al", max(train_set$Date), 
+            "(", nrow(train_set), "giorni)"))
+print(paste("Validation set:", min(valid_set$Date), "al", max(valid_set$Date), 
+            "(", nrow(valid_set), "giorni)"))
+
+# --- 2. Creazione Time Series (Training) ---
+# Creiamo la TS solo sui 30 giorni di training
+ts_train <- ts(train_set$Chl, frequency = 7)
+
+# --- 3. Addestramento Modello (Auto-ARIMA) ---
+fit <- auto.arima(ts_train, 
+                  seasonal = TRUE, 
+                  stepwise = FALSE, 
+                  approximation = FALSE,
+                  trace = FALSE) # Metto false per pulizia, mettilo a TRUE se vuoi vedere i log
+
+print("Modello selezionato:")
+print(summary(fit))
+
+# --- 4. Previsione (Forecasting) ---
+# Prevediamo per la lunghezza del validation set (h = 7)
+forecast_result <- forecast(fit, h = n_valid)
+
+# --- 5. Confronto e Validazione ---
+
+# Creiamo un dataframe per il confronto numerico
+confronto <- data.frame(
+  Data = valid_set$Date,
+  Reale = valid_set$Chl,
+  Previsto = as.numeric(forecast_result$mean),
+  Lower_95 = as.numeric(forecast_result$lower[,2]), # Intervallo confidenza 95%
+  Upper_95 = as.numeric(forecast_result$upper[,2])
+)
+
+print("Confronto puntuale (Ultimi 7 giorni):")
+print(confronto)
+
+# Calcolo metriche di errore (RMSE, MAE)
+# accuracy() confronta automaticamente la previsione con i dati reali (x)
+metriche <- accuracy(forecast_result, valid_set$Chl)
+print("Metriche di Accuratezza (Guarda la riga 'Test set'):")
+print(metriche)
+
+# --- 6. Visualizzazione Grafica ---
+# Uniamo tutto per un grafico chiaro con ggplot2
+
+# Creiamo un df unico per il plot
+plot_data <- bind_rows(
+  train_set %>% select(Date, Chl) %>% mutate(Tipo = "Training"),
+  valid_set %>% select(Date, Chl) %>% mutate(Tipo = "Reale (Validation)")
+)
+
+# Aggiungiamo le previsioni al grafico
+ggplot() +
+  # Linea dei dati storici (Training)
+  geom_line(data = plot_data %>% filter(Tipo == "Training"), 
+            aes(x = Date, y = Chl, color = "Training"), size = 1) +
+  
+  # Linea dei dati reali futuri (Validation)
+  geom_line(data = plot_data %>% filter(Tipo == "Reale (Validation)"), 
+            aes(x = Date, y = Chl, color = "Reale (Target)"), size = 1) +
+  
+  # Linea della Previsione
+  geom_line(data = confronto, 
+            aes(x = Data, y = Previsto, color = "Previsione Modello"), size = 1, linetype = "dashed") +
+  
+  # Area di confidenza (l'ombra grigia)
+  geom_ribbon(data = confronto, 
+              aes(x = Data, ymin = Lower_95, ymax = Upper_95), 
+              fill = "blue", alpha = 0.1) +
+  
+  labs(title = "Predizione Clorofilla-a: Confronto Training vs Validation",
+       subtitle = "Addestrato su 30 giorni, testato sugli ultimi 7",
+       y = "Chl-a (mg/m3)", x = "Data",
+       color = "Legenda") +
+  scale_color_manual(values = c("Training" = "black", 
+                                "Reale (Target)" = "green", 
+                                "Previsione Modello" = "red")) +
+  theme_minimal()
+
+
+
+# conformal prediction ----------------------------------------------------
+
+
+# --- 1. Preparazione dei Dati (Split in 3 parti) ---
+# Diciamo che hai 100 giorni totali.
+# Giorni 1-60: Training (Addestramento modello)
+# Giorni 61-90: Calibration (Calcolo soglia di errore)
+# Giorni 91-100: Test (Previsione futura reale)
+
+n_total <- nrow(data_bibione)
+n_test <- 10        # Ultimi 10 giorni
+n_calib <- 30       # 30 giorni per calibrare l'intervallo
+n_train <- 30
+
+# Creiamo i 3 dataset
+
+test_data  <- data_bibione[(n_total - n_test + 1):n_total, ]
+calib_data <- data_bibione[(n_total - n_test - n_train - n_calib+1):(n_total - n_test - n_train), ]
+train_data <- data_bibione[(n_total - n_test - n_train+1):(n_total - n_test), ]
+
+# --- 2. Addestramento (Training) ---
+# Usiamo un modello ARIMA, ma potresti usare qualsiasi cosa (XGBoost, Regressione, ecc.)
+model <- auto.arima(ts(train_data$Chl, frequency = 7))
+
+# --- 3. Calibrazione (Conformal Step) ---
+# Prevediamo sul Calibration set
+# Nota: Dobbiamo fare forecast iterativo o one-step-ahead per essere onesti
+# Per semplicità qui facciamo un forecast su tutta la finestra calibrazione
+calib_forecast_obj <- forecast(model, h = n_calib)
+calib_pred <- as.numeric(calib_forecast_obj$mean)
+
+# Calcoliamo i "Non-Conformity Scores" (Errori Assoluti)
+calib_scores <- abs(calib_data$Chl - calib_pred)
+
+# Scegliamo la confidenza desiderata (es. 90%)
+alpha <- 0.10 
+# Calcoliamo il quantile (1 - alpha) degli errori
+# Questo Q è la "distanza di sicurezza" che copre il 90% degli errori passati
+q_hat <- quantile(calib_scores, probs = (1 - alpha), names = FALSE)
+
+# Correzione per campioni piccoli (opzionale ma raccomandata: (n+1)/n)
+q_hat_adjusted <- q_hat * (1 + 1/length(calib_scores))
+
+print(paste("Margine di errore Conformal (Q): +/-", round(q_hat_adjusted, 3)))
+
+# --- 4. Previsione Futura (Test Set) ---
+# Prevediamo i valori futuri
+test_forecast_obj <- forecast(model, h = n_test)
+test_pred <- as.numeric(test_forecast_obj$mean)
+
+# --- 5. Costruzione Intervalli Conformal ---
+# Costruiamo l'intervallo sommando e sottraendo Q
+conformal_intervals <- data.frame(
+  Data = test_data$Date,
+  Reale = test_data$Chl,
+  Predizione = test_pred,
+  Lower_CP = test_pred - q_hat_adjusted,
+  Upper_CP = test_pred + q_hat_adjusted
+)
+
+# --- 6. Visualizzazione ---
+ggplot(conformal_intervals, aes(x = Data)) +
+  geom_line(aes(y = Reale, color = "Reale"), size = 1) +
+  geom_line(aes(y = Predizione, color = "Predizione"), linetype = "dashed") +
+  # L'intervallo di confidenza Conformal
+  geom_ribbon(aes(ymin = Lower_CP, ymax = Upper_CP), fill = "purple", alpha = 0.2) +
+  labs(title = "Previsione con Intervalli Conformal Prediction (90%)",
+       subtitle = "La fascia viola garantisce la copertura indipendentemente dalla distribuzione",
+       y = "Clorofilla") +
+  theme_minimal()

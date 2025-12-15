@@ -482,7 +482,7 @@ acf(residuals(model_bam_ar), main = "Autocorrelazione dei Residui")
 
 
 
-# ARIMA -------------------------------------------------------------------
+# ARIMA - predizione ricorsiva -------------------------------------------------------------------
 
 # --- 1. Caricamento Librerie ---
 library(forecast)    # Il motore principale per ARIMA
@@ -493,7 +493,8 @@ library(imputeTS)    # FONDAMENTALE: Per riempire i buchi nei dati della clorofi
 # coordinate bibione: 45.630, 13.045
 pos_bibione <- posizioni_target %>% 
   filter(near(Lat, 45.630, tol = .03), near(Lon, 13.044, tol = .03))
-
+data_bibione <- data_45 %>%
+  inner_join(pos_bibione, by = c("Lat", "Lon"))
 
 # --- 0. Pre-processing e Ordinamento ---
 # È cruciale che i dati siano ordinati per tempo prima di tagliare
@@ -672,3 +673,120 @@ ggplot(conformal_intervals, aes(x = Data)) +
        subtitle = "La fascia viola garantisce la copertura indipendentemente dalla distribuzione",
        y = "Clorofilla") +
   theme_minimal()
+
+hist(data_bibione$Chl)
+
+
+
+# XGBoost - predizione a un giorno!!! --------------------------------------------------------------------
+
+library(xgboost)
+library(caret) # Utile per creare dummy variables o split, qui lo usiamo per visualizzare
+
+# --- 1. Feature Engineering (Il passo più importante) ---
+# XGBoost non capisce le date. Dobbiamo trasformare il tempo in numeri.
+# E dobbiamo dirgli esplicitamente qual era la clorofilla ieri (Lag).
+
+data_ml <- data_45 %>%
+  arrange(Date) %>% # Fondamentale ordinare!
+  group_by(Lat, Lon) %>% # Se hai più punti, calcola i lag separatamente per punto!
+  mutate(
+    # A. Variabili Temporali Cicliche
+    DOY = yday(Date),           # Giorno dell'anno (1-365) -> Cattura stagionalità
+    Month = month(Date),        # Mese
+    Year = year(Date),
+    
+    # B. Lag Features (Memoria storica)
+    # "Quanto era la clorofilla ieri?"
+    Chl_Lag1 = lag(Chl, 1),     
+    # "Quanto era 3 giorni fa?"
+    Chl_Lag3 = lag(Chl, 3),
+    # "Quanto era una settimana fa?"
+    Chl_Lag7 = lag(Chl, 7),
+    
+    # C. Rolling Statistics (Tendenze recenti)
+    # Media mobile degli ultimi 3 giorni (richiede pacchetto zoo, o manuale)
+    # Qui usiamo una media semplice dei lag per non caricare troppe librerie
+    Chl_Mean_3d = (Chl_Lag1 + lag(Chl, 2) + Chl_Lag3) / 3
+  ) %>%
+  ungroup() %>%
+  # Rimuoviamo le prime righe che ora hanno NA (a causa dei lag)
+  drop_na()
+
+# --- 2. Preparazione dei Dati (Train / Test Split) ---
+# Non fare sample random! Taglia per data.
+data_ml <- data_ml %>% arrange(Date)
+
+# Usiamo gli ultimi 15 giorni come Test
+cutoff_date <- max(data_ml$Date) - 15
+cutoff_training_date <- cutoff_date - 30
+
+train_set <- data_ml %>% filter(Date <= cutoff_date)
+test_set  <- data_ml %>% filter(Date > cutoff_date)
+
+# Definiamo le colonne che il modello userà per imparare (Features)
+# NOTA: NON includiamo 'Date' o 'Chl' (target) qui.
+features <- c("Lat", "Lon", "DOY", "Month", 
+              "Chl_Lag1", "Chl_Lag3", "Chl_Lag7", "Chl_Mean_3d")
+
+# Creiamo le matrici ottimizzate per XGBoost (xgb.DMatrix)
+dtrain <- xgb.DMatrix(data = as.matrix(train_set[, features]), 
+                      label = train_set$Chl)
+
+dtest  <- xgb.DMatrix(data = as.matrix(test_set[, features]), 
+                      label = test_set$Chl)
+
+# --- 3. Addestramento del Modello ---
+# Parametri base (da ottimizzare in seguito con Cross Validation)
+params <- list(
+  objective = "reg:squarederror", # Vogliamo minimizzare l'errore numerico
+  eta = 0.1,                      # Learning rate (più basso è più preciso ma lento)
+  max_depth = 6,                  # Profondità degli alberi (se troppo alto -> overfitting)
+  subsample = 0.8,                # Usa l'80% dei dati per ogni albero (evita overfitting)
+  colsample_bytree = 0.8          # Usa l'80% delle colonne per ogni albero
+)
+
+# Addestriamo
+print("Addestramento in corso...")
+model_xgb <- xgb.train(
+  params = params,
+  data = dtrain,
+  nrounds = 500,                  # Numero di alberi
+  watchlist = list(train = dtrain, test = dtest),
+  print_every_n = 50,
+  early_stopping_rounds = 20      # Si ferma se non migliora per 20 giri
+)
+
+# --- 4. Predizione e Valutazione ---
+# Prevediamo sul test set
+preds <- predict(model_xgb, dtest)
+
+# Uniamo i risultati per vedere come è andata
+results <- test_set %>%
+  select(Date, Lat, Lon, Chl) %>%
+  mutate(Predicted = preds,
+         Error = Chl - Predicted)
+
+# Calcoliamo RMSE
+rmse <- sqrt(mean(results$Error^2))
+print(paste("RMSE Finale:", round(rmse, 3)))
+
+# --- 5. Feature Importance (Interpretazione) ---
+# Quali variabili sono state più utili?
+importance_matrix <- xgb.importance(feature_names = features, model = model_xgb)
+xgb.plot.importance(importance_matrix)
+
+# --- 6. Grafico Previsione ---
+# Prendiamo un punto specifico per il grafico (es. il primo Lat/Lon disponibile)
+one_location <- results %>% 
+  inner_join(pos_bibione, by = c("Lat", "Lon"))
+
+
+ggplot(one_location, aes(x = Date)) +
+  geom_line(aes(y = Chl, color = "Reale"), size = 1) +
+  geom_line(aes(y = Predicted, color = "XGBoost"), linetype = "dashed", size = 1) +
+  labs(title = "XGBoost - predizione a 1 giorno: Reale vs Predetto", 
+       subtitle = paste("RMSE:", round(rmse, 3))) +
+  theme_minimal()
+
+

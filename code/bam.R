@@ -482,7 +482,7 @@ acf(residuals(model_bam_ar), main = "Autocorrelazione dei Residui")
 
 
 
-# ARIMA - predizione ricorsiva -------------------------------------------------------------------
+# SARIMA - predizione ricorsiva -------------------------------------------------------------------
 
 # --- 1. Caricamento Librerie ---
 library(forecast)    # Il motore principale per ARIMA
@@ -581,24 +581,24 @@ ggplot() +
   
   # Linea dei dati reali futuri (Validation)
   geom_line(data = plot_data %>% filter(Tipo == "Reale (Validation)"), 
-            aes(x = Date, y = Chl, color = "Reale (Target)"), size = 1) +
+            aes(x = Date, y = Chl, color = "Target"), size = 1) +
   
   # Linea della Previsione
   geom_line(data = confronto, 
-            aes(x = Data, y = Previsto, color = "Previsione Modello"), size = 1, linetype = "dashed") +
+            aes(x = Data, y = Previsto, color = "Prediction"), size = 1, linetype = "dashed") +
   
   # Area di confidenza (l'ombra grigia)
-  geom_ribbon(data = confronto, 
-              aes(x = Data, ymin = Lower_95, ymax = Upper_95), 
-              fill = "blue", alpha = 0.1) +
-  
-  labs(title = "Predizione Clorofilla-a: Confronto Training vs Validation",
-       subtitle = "Addestrato su 30 giorni, testato sugli ultimi 7",
-       y = "Chl-a (mg/m3)", x = "Data",
-       color = "Legenda") +
+  # geom_ribbon(data = confronto, 
+  #             aes(x = Data, ymin = Lower_95, ymax = Upper_95), 
+  #             fill = "blue", alpha = 0.1) +
+   
+  labs(title = "Chlorofill-a Prediction",
+       subtitle = "30-days trainig, 7-days testing",
+       y = "Chl-a (mg/m3)", x = "Day",
+       color = "Legend") +
   scale_color_manual(values = c("Training" = "black", 
-                                "Reale (Target)" = "green", 
-                                "Previsione Modello" = "red")) +
+                                "Target" = "green", 
+                                "Prediction" = "red")) +
   theme_minimal()
 
 
@@ -718,10 +718,13 @@ data_ml <- data_45 %>%
 data_ml <- data_ml %>% arrange(Date)
 
 # Usiamo gli ultimi 15 giorni come Test
-cutoff_date <- max(data_ml$Date) - 15
+cutoff_date <- max(data_ml$Date) - 7
 cutoff_training_date <- cutoff_date - 30
 
-train_set <- data_ml %>% filter(Date <= cutoff_date)
+train_set <- data_ml %>% 
+              filter(Date <= cutoff_date) # %>% 
+              #filter(cutoff_training_date<= Date)
+
 test_set  <- data_ml %>% filter(Date > cutoff_date)
 
 # Definiamo le colonne che il modello userà per imparare (Features)
@@ -790,3 +793,40 @@ ggplot(one_location, aes(x = Date)) +
   theme_minimal()
 
 
+# Creiamo un df unico per il plot
+plot_data <- bind_rows(
+  train_set %>% inner_join(pos_bibione, by = c("Lat", "Lon"))
+            %>% select(Date, Chl)
+            %>%  filter(cutoff_training_date<= Date)
+            %>% arrange(Date)
+            %>% mutate(Tipo = "Training") ,
+  valid_set %>% select(Date, Chl) %>% mutate(Tipo = "Reale (Validation)")
+)
+
+# Aggiungiamo le previsioni al grafico
+ggplot() +
+  # Linea dei dati storici (Training)
+  geom_line(data = plot_data %>% filter(Tipo == "Training"), 
+            aes(x = Date, y = Chl, color = "Training"), size = 1) +
+  
+  # Linea dei dati reali futuri (Validation)
+  geom_line(data = plot_data %>% filter(Tipo == "Reale (Validation)"), 
+            aes(x = Date, y = Chl, color = "Target"), size = 1) +
+  
+  # Linea della Previsione
+  geom_line(data = one_location, 
+            aes(x = Date, y = Predicted, color = "Prediction"), size = 1, linetype = "dashed") +
+  
+  # Area di confidenza (l'ombra grigia)
+  # geom_ribbon(data = confronto, 
+  #             aes(x = Data, ymin = Lower_95, ymax = Upper_95), 
+  #             fill = "blue", alpha = 0.1) +
+  
+  labs(title = "Chlorofill-a Prediction",
+       subtitle = "360-days trainig, 7-days testing",
+       y = "Chl-a (mg/m3)", x = "Day",
+       color = "Legend") +
+  scale_color_manual(values = c("Training" = "black", 
+                                "Target" = "green", 
+                                "Prediction" = "red")) +
+  theme_minimal()

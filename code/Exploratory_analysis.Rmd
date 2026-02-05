@@ -5,9 +5,9 @@ date: "2025-11-28"
 output: html_document
 ---
 
-### Libraries
+### **Libraries**
 
-```{r libraries, include = FALSE}
+```{r libraries, include = T}
 library("corrplot")
 library(dplyr)
 library(MASS)
@@ -16,92 +16,246 @@ library(DepthProc)
 library(hexbin)
 library(aplpack)
 library(robustbase)
+library(ggplot2)
+library(tidyverse)
+library(roahd)
 ```
 
-```{r dataset implementation, include=FALSE}
-#dsMERGIATO <- read.csv("/Users/leomarcellopoli/Documents/Nonparametric/Project/Non-parametric-Statistics-2025-2026/dataset/dataset_MERGIATO", header = TRUE, sep = ",")
+### **Import dataset**
+
+```{r dataset implementation, include=T}
+data = read.csv("../dataset/dataset_MERGIATO.", header = TRUE, sep = ",")
+data = data[data$Lat >= 45, ]
 ```
 
-```{r set seed, include=FALSE}
-set.seed(123) # Per riproducibilità
+```{r set seed, include=T}
+set.seed(123) # Reproducibility
+
+rand_indexes = sample(1:nrow(data), 20000)
+data_reduced = data[rand_indexes, -1]      # Removed the first column (Date)
+data_chl = as.data.frame(data_reduced[, which(colnames(data_reduced) == "Chl")])
+data_cov = data_reduced[, -which(colnames(data_reduced) == "Chl")]
 ```
 
-## Import dataset
 
-```{r read dataset, include=FALSE}
-indici_random <- sample(1:nrow(dsMERGIATO), 20000)
-dsridotto <- dsMERGIATO[indici_random, -1]      # e senza date
-dsclorofilla <- as.data.frame(dsridotto[, which(colnames(dsridotto) == "Chl")])
-dscovariate <- dsridotto[, -which(colnames(dsridotto) == "Chl")]
+# **Multivariate data Exploration**
+
+## **Correlation plots**
+
+```{r corrplot}
+corrplot(cor(data_reduced), method = "circle")
 ```
 
-## Correlation plot
-
-```{r}
-corrplot(cor(dsridotto), method = "circle")
-```
-
-## Scatterplot
+## **Scatterplots**
 
 ```{r scatterplot, echo=TRUE}
-for (i in 1:ncol(dscovariate)) {
+for (i in 1:ncol(data_cov)) {
   
-  # A. Estrazione dinamica del nome della colonna X
-  nome_covariata <- colnames(dscovariate)[i]
+  cov_name = colnames(data_cov)[i]
   
-  # B. Plot con xlab dinamico
-  # plot(X, Y, ...)
-  plot(dscovariate[,i], 
-       dsclorofilla[,1], 
+  plot(data_cov[,i], 
+       data_chl[,1], 
        pch = 16, 
-       cex = 0.5, # Punti piccoli
-       col = rgb(0.7, 0, 0, 0.4), # Colore rosso trasparente
-       ylab = "Clorofilla (Chl)",
-       xlab = nome_covariata, # <--- QUI STA LA CORREZIONE
-       main = paste("Chl vs", nome_covariata)
+       cex = 0.5, # Small points
+       col = rgb(0.7, 0, 0, 0.4), # Transparent red
+       ylab = "Chl",
+       xlab = cov_name,
+       main = paste("Scatterplot Chl/", cov_name)
   ) 
 }
 ```
 
-### Hexagonal binning
-
-to visualize data density
+## **Hexagonal binning**
 
 ```{r hexagonal binning, echo=TRUE}
-for (i in 1:ncol(dscovariate)) {
+for (i in 1:ncol(data_cov)) {
   
-  # A. Estrazione dinamica del nome della colonna X
-  nome_covariata <- colnames(dscovariate)[i]
+  cov_name = colnames(data_cov)[i]
   
-  # B. Hexagonal binning
-  bin = hexbin(dscovariate[,i], dsclorofilla[,1], xbins=30, xlab = nome_covariata, ylab="Chl")
-  plot(bin, main="Hexagonal Binning")
-
+  # Hexagonal binning
+  bin = hexbin(data_cov[,i], data_chl[,1], xbins=30, xlab = cov_name, ylab="Chl")
+  plot(bin,
+       main = paste("Hexagonal Binning Chl/", cov_name))
 }
 ```
 
 Molti comportamenti particolari che vanno un attimo analizzati.
 
-## Depth measures
+## **Depth measures analysis**
 
 ```{r depth measures, echo=TRUE}
-for (i in 1:ncol(dscovariate)) {
-  #dP <- depthPersp(cbind(dscovariate[,i], dsclorofilla[,1]), depth_params = list(method='Tukey'), xlab = nome_covariata, ylab = "Chl")
-  dP <- DepthProc::depthContour(cbind(dscovariate[,i], dsclorofilla[,1]), depth_params = list(method='Tukey'))
+for (i in 1:ncol(data_cov)) {
+  cov_name = colnames(data_cov)[i]
+  
+  # Tukey depth contour
+  dP <- DepthProc::depthContour(
+    cbind(data_cov[,i], data_chl[,1]), 
+    depth_params = list(method = 'Tukey')
+  )
+
+  ggplot2::labs( # Needed because depthContour is a ggplot-like object
+    x = cov_name, 
+    y = "Chl", 
+    title = paste("Tukey Depth Contour Chl/", cov_name)
+  )
 }
 ```
 
 ```{r other outliers, echo = TRUE}
-for (i in 1:ncol(dscovariate)) {
+for (i in 1:ncol(data_cov)) {
+  cov_name <- colnames(data_cov)[i]
   
-  # A. Estrazione dinamica del nome della colonna X
-  nome_covariata <- colnames(dscovariate)[i]
-  
-  # B. 
-  aplpack::bagplot(cbind(dscovariate[,i], dsclorofilla[,1]), show.whiskers = F, main = "bagplot")
+  # Bagplot
+  aplpack::bagplot(cbind(data_cov[,i], data_chl[,1]), show.whiskers = F, 
+                   main = paste("Bagplot Chl/", cov_name), xlab = cov_name, ylab = "Chl")
 }
 ```
 
 It may look like there are a lot of outliers, but it is a very high amount and also it seems that the pattern is quite uniform in the sense that the red points don't seem strange values to delete from the original data.
 
 So no outliers detected.
+
+# **Functional Data Exploration (daily)**
+
+```{r data preprocessing}
+{#codice per trasformare data in numerico
+data = data %>%
+  mutate(
+    Date = as.Date(Date),
+    Date_numeric = as.numeric(Date - as.Date("2021-12-31")) # as.Date("2021-12-31") è lo 0
+  ) %>%
+  dplyr::select(Date_numeric, everything(), -Date)
+}
+
+time_grid = sort(unique(data$Date_numeric))
+coordinates = unique(group_by(data[,2:3]))
+vars_to_func <- c("Chl", "Temp", "Salinity", "MLD", "uo", "vo", "Current_Speed", "Solar_Flux", "Heat_Flux")
+coord_reference <- data %>%
+  distinct(Lon, Lat) %>%
+  arrange(Lon, Lat) # Deve essere identico all'arrange usato nel pivot_wider!
+world_map = map_data("world", region = c("Italy", "Croatia", "Slovenia"))
+```
+
+```{r functional data, include=T}
+data_fun <- list()
+
+for(var_name in vars_to_func) {
+  message(paste("Working on: ", var_name, "..."))
+  
+  # Matrix of values
+  data_matrix = data %>%
+    
+    dplyr::select(Lon, Lat, Date_numeric, all_of(var_name)) %>%
+    pivot_wider(names_from = Date_numeric, values_from = all_of(var_name)) %>% # Time on columns
+    arrange(Lon, Lat) %>%
+    dplyr::select(-Lon, -Lat) %>% # Remove coordinate columns --> to obtain numerical matrix
+    as.matrix()
+  
+  # fData object
+  f_obj = fData(grid = time_grid, values = data_matrix)
+  
+  # Save fData object in the list
+  data_fun[[var_name]] = f_obj
+}
+rm(var_name, data_matrix, f_obj)
+gc()
+
+message("Done!")
+```
+## **Plot of variables during the year**
+
+```{r plot curve variabili, echo = TRUE}
+for(var_name in vars_to_func) {
+  plot(data_fun[[var_name]], main = paste("Tutte le curve funzionali di", var_name), ylab = var_name)
+  # 2. Aggiunta linee verticali (Griglia temporale)
+  abline(v = seq(151, 516, by = 7),  # Sequenza da 151 a 516 ogni 7
+         col = "gray",               # Colore grigio
+         lty = 2,                    # Tipo di linea (2 = tratteggiata/dashed)
+         lwd = 0.5)                  # Spessore sottile
+}
+```
+
+## **Functional Boxplot**
+
+Finally, we can create functional boxplots for each variable to visualize the distribution of functional data.
+
+```{r functional boxplot all variables, echo=TRUE}
+for(var_name in vars_to_func) {
+  invisible(fbplot(data_fun[[var_name]], main = paste("Boxplot di", var_name), ylab = var_name))
+  # 2. Aggiunta linee verticali (Griglia temporale)
+  abline(v = seq(151, 516, by = 7),  # Sequenza da 151 a 516 ogni 9
+         col = "gray",               # Colore grigio
+         lty = 2,                    # Tipo di linea (2 = tratteggiata/dashed)
+         lwd = 0.5)                  # Spessore sottile
+}
+```
+
+# **Functional Data Exploration (weekly)**
+```{r preprocessing, echo=TRUE}
+
+data_weekly = data %>%
+  filter((Date_numeric - 151) %% 7 == 0) %>%
+  
+  mutate(Week_Number = ((Date_numeric - 151) / 7) + 1) %>%
+  
+  dplyr::select(Lon, Lat, Week_Number, everything(), -Date_numeric)
+
+time_weekly_grid = sort(unique(data_weekly$Week_Number))
+
+
+```
+
+```{r functional data, include=T}
+data_fun_weekly <- list()
+
+for(var_name in vars_to_func) {
+  message(paste("Working on: ", var_name, "..."))
+  
+  # Matrix of values
+  data_matrix = data_weekly %>%
+    
+    dplyr::select(Lon, Lat, Week_Number, all_of(var_name)) %>%
+    pivot_wider(names_from = Week_Number, values_from = all_of(var_name)) %>% # Time on columns
+    arrange(Lon, Lat) %>%
+    dplyr::select(-Lon, -Lat) %>% # Remove coordinate columns --> to obtain numerical matrix
+    as.matrix()
+  
+  # fData object
+  f_obj = fData(grid = time_weekly_grid, values = data_matrix)
+  
+  # Save fData object in the list
+  data_fun_weekly[[var_name]] = f_obj
+}
+rm(var_name, data_matrix, f_obj)
+gc()
+
+message("Done!")
+```
+
+## **Plot of variables during the year**
+
+```{r plot curve variabili, echo = TRUE}
+for(var_name in vars_to_func) {
+  plot(data_fun_weekly[[var_name]], main = paste("Tutte le curve funzionali di", var_name), ylab = var_name)
+  # 2. Aggiunta linee verticali (Griglia temporale)
+  abline(v = seq(151, 516, by = 7),  # Sequenza da 151 a 516 ogni 7
+         col = "gray",               # Colore grigio
+         lty = 2,                    # Tipo di linea (2 = tratteggiata/dashed)
+         lwd = 0.5)                  # Spessore sottile
+}
+```
+
+## **Functional Boxplot**
+
+Finally, we can create functional boxplots for each variable to visualize the distribution of functional data.
+
+```{r functional boxplot all variables, echo=TRUE}
+for(var_name in vars_to_func) {
+  invisible(fbplot(data_fun_weekly[[var_name]], main = paste("Boxplot di", var_name), ylab = var_name))
+  # 2. Aggiunta linee verticali (Griglia temporale)
+  abline(v = seq(151, 516, by = 7),  # Sequenza da 151 a 516 ogni 9
+         col = "gray",               # Colore grigio
+         lty = 2,                    # Tipo di linea (2 = tratteggiata/dashed)
+         lwd = 0.5)                  # Spessore sottile
+}
+```

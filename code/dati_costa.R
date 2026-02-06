@@ -62,7 +62,7 @@ point0_index <- as.numeric(point0_index)
 
 
 # 2. Funzione per calcolare l'ordinamento spaziale
-reorder_points <- function(df) {
+reorder_points <- function(df, starting_index) {
   # Trasforma in matrice per velocità
   mat <- as.matrix(df[, c("Lon", "Lat")])
   n <- nrow(mat)
@@ -71,7 +71,7 @@ reorder_points <- function(df) {
   ordered_indices <- numeric(n)
   
   # Partiamo dal primo punto
-  current_idx <- point0_index
+  current_idx <- starting_index
   ordered_indices[1] <- current_idx
   unvisited <- unvisited[unvisited != current_idx]
   
@@ -92,7 +92,8 @@ reorder_points <- function(df) {
 }
 
 # 3. Applica l'ordinamento
-bordo_ordinato <- reorder_points(bordo_df_clean)
+bordo_ordinato <- reorder_points(bordo_df_clean, point0_index)
+
 
 # 4. Visualizza per verifica
 plot(bordo_ordinato$Lon, bordo_ordinato$Lat, type = "b", pch = 16, col = "blue",
@@ -118,6 +119,12 @@ dataset_ordinato_distanza <- bordo_ordinato %>%
 
 # 3. Visualizzazione delle prime righe per controllo
 head(dataset_ordinato_distanza)
+dataset_ordinato_distanza <- dataset_ordinato_distanza %>%
+  distinct(Lat, Lon, .keep_all = TRUE)
+# Conta quante righe sono "copie" di valori già visti
+sum(duplicated(dataset_ordinato_distanza$distanza_cumulata))
+
+dataset_ordinato_distanza$Pos_ID <- 1:dim(dataset_ordinato_distanza)[1]
 
 #### plot ####
 library(ggplot2)
@@ -168,7 +175,7 @@ data_pos_x_weekly <- data_weekly %>%
                     inner_join(dataset_ordinato_distanza, by = c("Lat", "Lon"))
 
 chl_pos_x_weekly <- data_pos_x_weekly %>%
-  select(2:5, 14:15)
+  select(2:5, 14:16)
 
 # 
 # write.csv(data_pos_x_weekly, "dataset/bordo_x_weekly.csv", row.names = FALSE)

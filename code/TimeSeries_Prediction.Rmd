@@ -1,0 +1,158 @@
+---
+title: "TimeSeries_Prediction"
+author: "Tito"
+date: "2026-02-06"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+```{r libraries, include=FALSE}
+library(dplyr) # Tidy data
+library(tidyverse) # Tidy data
+library(roahd) # Functional data analysis
+library(conformalInference.fd) # Conformal prediction (functional)
+```
+
+```{r dataset}
+data_weekly = read.csv("../dataset/data_weekly.csv", header = T)
+
+head(data_weekly)
+dim(data_weekly)
+summary(data_weekly)
+
+```
+
+We have 430 different measurements of weekly data.
+
+```{r week table, results='hide'}
+table(data_weekly$Week_Number)
+```
+
+```{r fdata, results='hide'}
+coordinates = unique(group_by(data_weekly[,2:3]))
+vars_to_func <- c("Chl", "Temp", "Salinity", "MLD", "uo", "vo", "Current_Speed", "Solar_Flux", "Heat_Flux")
+time_weekly_grid = sort(unique(data_weekly$Week_Number))
+
+data_fun_weekly <- list()
+
+for(var_name in vars_to_func) {
+  
+  # Matrix of values
+  data_matrix = data_weekly %>%
+    
+    dplyr::select(Lon, Lat, Week_Number, all_of(var_name)) %>%
+    pivot_wider(names_from = Week_Number, values_from = all_of(var_name)) %>% # Time on columns
+    arrange(Lon, Lat) %>%
+    dplyr::select(-Lon, -Lat) %>% # Remove coordinate columns --> to obtain numerical matrix
+    as.matrix()
+  
+  # fData object
+  f_obj = fData(grid = time_weekly_grid, values = data_matrix)
+  
+  # Save fData object in the list
+  data_fun_weekly[[var_name]] = f_obj
+}
+rm(var_name, data_matrix, f_obj)
+gc()
+```
+
+```{r functional boxplot, echo=TRUE}
+for(var_name in vars_to_func) {
+  invisible(fbplot(data_fun_weekly[[var_name]], main = paste("Boxplot of", var_name), ylab = var_name))
+  # 2. Aggiunta linee verticali (Griglia temporale)
+  abline(v = seq(151, 516, by = 7),  # Sequenza da 151 a 516 ogni 9
+         col = "gray",               # Colore grigio
+         lty = 2,                    # Tipo di linea (2 = tratteggiata/dashed)
+         lwd = 0.5)                  # Spessore sottile
+}
+```
+
+```{r conformal prediction, echo=TRUE}
+alpha = 0.2
+
+fd = data_fun_weekly$Chl
+
+p = fd$p
+n = fd$N
+
+train_idx = sample(1:n, n/2)
+
+Y_train = fd[train_idx,]
+Y_cal = fd[-train_idx,]
+
+mu_hat = median_fData(Y_train, type = 'MBD')
+
+res_cal = abs(Y_cal$values - matrix(mu_hat$values, 
+                                    nrow = nrow(Y_cal$values), 
+                                    ncol = ncol(Y_cal$values), 
+                                    byrow = TRUE))
+
+scores = apply(res_cal, 1, max)
+
+n_cal = length(scores)
+q_hat = sort(scores)[ceiling((n_cal + 1) * (1 - alpha))]
+
+grid = time_weekly_grid
+
+lower_bound = mu_hat$values - q_hat
+upper_bound = mu_hat$values + q_hat
+
+# 7. Visualization using roahd's plotting style
+plot(fd, col = "gray", main = "Roahd + Conformal Prediction", ylim = c(-2,4))
+lines(grid, mu_hat$values, col = "red", lwd = 3) # The "prediction"
+lines(grid, lower_bound, col = "blue", lwd = 2, lty = 2) # Lower Band
+lines(grid, upper_bound, col = "green", lwd = 2, lty = 2) # Upper Band
+```
+
+```{r conformal prediction on log-tranformed data, echo=TRUE}
+
+p = length(time_weekly_grid)
+n = fd$N
+
+alpha = 0.2
+
+chl_values = data_weekly$Chl
+chl_matrix = matrix(chl_values, nrow = n, ncol = p, byrow = TRUE)
+
+fd_log = fData(grid = time_weekly_grid, values = log(chl_matrix))
+
+train_idx = sample(1:n, n/2)
+
+Y_train_log = fd_log[train_idx,]
+Y_cal_log = fd_log[-train_idx,]
+
+mu_hat_log = median_fData(Y_train_log, type = 'MBD')
+
+res_cal_log = abs(Y_cal_log$values - matrix(mu_hat_log$values, 
+                                            nrow = nrow(Y_cal_log$values), 
+                                            ncol = ncol(Y_cal_log$values), 
+                                            byrow = TRUE))
+
+scores_log = apply(res_cal_log, 1, max)
+
+n_cal = length(scores_log)
+q_hat_log = sort(scores_log)[ceiling((n_cal + 1) * (1 - alpha))]
+
+grid = time_weekly_grid
+
+lower_log = mu_hat_log$values - q_hat_log
+upper_log = mu_hat_log$values + q_hat
+
+mu_final    = exp(mu_hat_log$values)
+lower_final = exp(lower_log)
+upper_final = exp(upper_log)
+```
+
+```{r plot conformal prediction on log-tranformed data, echo=TRUE}
+# 7. Visualization using roahd's plotting style
+plot(fd, col = "gray", main = "Roahd + Conformal Prediction")
+lines(grid, mu_final, col = "red", lwd = 3) # The "prediction"
+lines(grid, lower_final, col = "blue", lwd = 2, lty = 2) # Lower Band
+lines(grid, upper_final, col = "green", lwd = 2, lty = 2) # Upper Band
+
+legend("topright", legend = c("Prediction", "Lower Band", "Upper Band"), 
+       col = c("red", "blue", "green"), lwd = c(3, 2, 2), lty = c(1, 2, 2))
+```

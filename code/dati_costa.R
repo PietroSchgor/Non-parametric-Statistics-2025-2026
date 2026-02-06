@@ -157,5 +157,20 @@ print(plot_distanza)
 # Write CSV ---------------------------------------------------------------
 
 # Se vuoi salvare il risultato in un file CSV:
-write.csv(dataset_ordinato_distanza, "dataset/bordo_con_distanze.csv", row.names = FALSE)
+#write.csv(dataset_ordinato_distanza, "dataset/bordo_con_distanze.csv", row.names = FALSE)
 
+
+# Merge data_weekly -------------------------------------------------------
+
+data_weekly <- read.csv("dataset/data_weekly.csv")
+
+data_pos_x_weekly <- data_weekly %>%
+                    inner_join(dataset_ordinato_distanza, by = c("Lat", "Lon"))
+
+chl_pos_x_weekly <- data_pos_x_weekly %>%
+  select(2:5, 14:15)
+
+# 
+# write.csv(data_pos_x_weekly, "dataset/bordo_x_weekly.csv", row.names = FALSE)
+# 
+# write.csv(chl_pos_x_weekly, "dataset/chl_bordo_x_weekly.csv", row.names = FALSE)

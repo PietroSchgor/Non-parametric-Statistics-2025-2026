@@ -7,12 +7,12 @@ setwd("~/uni/2025-2026/non param/progetto/clorofilla/Non-parametric-Statistics-2
 library(tidyverse)
 
 # data <- read.csv("dataset/dataset_MERGIATO")
-# dataset_ordinato_distanza <- read.csv("dataset/pos_con_distanze.csv")
+# dataset_ordinato_distanza <- read.csv("dataset/bordo_con_distanze.csv")
 # data_pos_x_daily <- data %>%
 #   inner_join(dataset_ordinato_distanza, by = c("Lat", "Lon"))
 # 
 # chl_pos_x_daily <- data_pos_x_daily %>%
-#   dplyr::select(Date, Lat, Lon, Chl, distanza_cumulata) 
+#   dplyr::select(Date, Lat, Lon, Chl, distanza_cumulata)
 # 
 # chl_pos_x_daily$Date <- as.Date(chl_pos_x_daily$Date)
 # 
@@ -26,7 +26,7 @@ library(tidyverse)
 # matrice_df <- chl_pos_x_daily %>%
 #   dplyr::select(Date, distanza_cumulata, Chl) %>%
 #   # Ordina prima i dati per sicurezza
-#   arrange(Date, distanza_cumulata) %>% 
+#   arrange(Date, distanza_cumulata) %>%
 #   # Trasforma in formato largo
 #   pivot_wider(names_from = distanza_cumulata, values_from = Chl)
 # 
@@ -35,10 +35,15 @@ library(tidyverse)
 # rownames(matrice_finale) <- matrice_df$Date
 # 
 # sum(is.na(matrice_finale))
-# # Salvataggio standard (separatore: virgola, decimale: punto)
+# # # Salvataggio standard (separatore: virgola, decimale: punto)
 # write.csv(matrice_finale, "dataset/matrix_X_fda_daily.csv", row.names = TRUE)
-matrice_finale <- read.csv("dataset/matrix_X_fda_daily.csv")
 
+
+matrice_finale <- read.csv("dataset/matrix_X_fda_daily.csv", row.names = 1)
+matrice_finale <- as.matrix(matrice_finale)
+
+dataset_ordinato_distanza <- read.csv("dataset/bordo_con_distanze.csv")
+x <- sort(unique(dataset_ordinato_distanza$distanza_cumulata))
 # 1. Carica il pacchetto (se non lo hai: install.packages("fields"))
 library(fields)
 library(viridis)
@@ -59,7 +64,7 @@ matplot(x, t(matrice_finale),
 image.plot(legend.only = TRUE, 
            zlim = range(as.numeric(rownames(matrice_finale))), 
            col = colori, 
-           legend.lab = "Settimana", 
+           legend.lab = "day", 
            legend.line = 3)
 
 # fda ---------------------------------------------------------------------
@@ -160,9 +165,9 @@ fit_var_train <- VAR(train_set, p = 7, type = "both") # p=2 come esempio di lag
 # Previsione per le 5 settimane di validazione
 pred_backtest <- predict(fit_var_train, n.ahead = n_val)
 
-par(mfrow = c(3, 1), mar = c(4, 4, 2, 1))
+par(mfrow = c(4, 1), mar = c(4, 4, 2, 1))
 
-for(i in 1:3) {
+for(i in 1:4) {
   nome_pc <- paste0("PC", i)
   plot(1:n_tot, scores_all[, i], type = "l", col = "black", lwd = 1,
        main = paste("Backtesting", nome_pc), xlab = "Settimana", ylab = "Score")
@@ -196,90 +201,474 @@ coef_finali <- coef_predetti + coef_media
 # Creazione dell'oggetto funzionale
 curve_predette_fd <- fd(coef_finali, basis_obj)
 
-# Plot delle 7 curve predette (sfumatura viridis)
-plot(curve_predette_fd, col = viridis(n_val), lty = 1, lwd = 2,
-     main = "Profili Spaziali Predetti (Set di Validazione)")
+library(viridis)
 
-# Reale (l'ultimo pezzo del dataset originale)
-plot(chl_fd[(n_tot - n_val + 1)], col = "black", lwd = 2)
-# Predetta
-plot(curve_predette_fd[1], col = "red", lty = 2, add = TRUE)
+# Numero di step ahead (pari alle righe di scores_predetti)
+n_val <- nrow(scores_predetti)
+
+# Definiamo i colori per essere sicuri che corrispondano tra plot e legenda
+colori_predizione <- viridis(n_val)
+
+# Plot delle curve funzionali predette
+par(mfrow = c(1,1))
+plot(curve_predette_fd, 
+     col = colori_predizione, 
+     lty = 1, 
+     lwd = 2,
+     main = "Profili Spaziali Predetti (Set di Validazione)",
+     xlab = "Distanza / Posizione", 
+     ylab = "Valore Funzionale")
+
+# Creazione delle etichette per la legenda
+etichette_legenda <- paste("Step +", 1:n_val)
+
+# Aggiunta della legenda
+# 'topright' la posiziona in alto a destra, puoi cambiarla in 'topleft' se copre i dati
+legend("topright", 
+       legend = etichette_legenda, 
+       col = colori_predizione, 
+       lwd = 2, 
+       lty = 1, 
+       cex = 0.8,      # Dimensione del testo
+       bty = "n",      # Rimuove il bordo della legenda
+       title = "Orizzonte Previsivo")
 
 
+par(mfrow = c(4, 2), mar = c(4, 4, 2, 1)) # mar riduce i margini per far stare tutto
+
+for (i in 1:n_val) {
+  # Plot della curva reale (Nera)
+  plot(chl_fd[(n_tot - n_val + i)], 
+       col = "black", 
+       lwd = 2, 
+       ylim = c(0, 5), 
+       main = paste("Validazione: Step", i))
+  
+  # Aggiunta della curva predetta (Rossa tratteggiata)
+  plot(curve_predette_fd[i], 
+       col = "red", 
+       lty = 2, 
+       lwd = 2, 
+       add = TRUE)
+  
+  # Aggiunta della legenda specifica per ogni riquadro
+  legend("topright", 
+         legend = c("Reale", paste("Predetto +", i)), 
+         col = c("black", "red"), 
+         lty = c(1, 2), 
+         lwd = 2, 
+         cex = 0.7,      # Dimensione ridotta per stare nei piccoli riquadri
+         bty = "n")      # Rimuove il bordo per pulizia visiva
+}
+
+# Definiamo le curve reali per il periodo di validazione/test
+curve_reali <- chl_fd[(n_tot - n_val + 1):n_tot]
 
 
+calcola_rmse_giornaliero <- function(curve_reali, curve_predette) {
+  # Calcola la differenza tra gli oggetti funzionali
+  diff_fd <- curve_reali - curve_predette
+  
+  # Calcola l'integrale del quadrato della differenza (L2 norm squared)
+  # inprod() calcola la matrice degli integrali incrociati. 
+  # A noi interessano solo gli elementi sulla diagonale (giorno 1 vs giorno 1, ecc.)
+  integrali_quadrati <- diag(inprod(diff_fd, diff_fd))
+  
+  # Restituisce la radice quadrata (RMSE)
+  return(sqrt(integrali_quadrati))
+}
 
 
+err_var   <- calcola_rmse_giornaliero(curve_reali, curve_predette_fd)
+# 2. Plot dell'errore
+plot(1:length(err_var), err_var, 
+     type = "b",               # Linea con punti
+     pch = 19,                 # Pallino pieno
+     col = "red",              # Colore rosso per il VAR
+     lwd = 2,                  # Spessore linea
+     xlab = "Giorno di Previsione (Step-ahead)", 
+     ylab = "RMSE Funzionale",
+     main = "Andamento Errore di Previsione - Modello VAR",
+     panel.first = grid(),
+     ylim = c(0, 3))    
+
+# Opzionale: Aggiungi i valori numerici sopra i punti per precisione
+text(1:length(err_var), err_var, labels = round(err_var, 4), pos = 3, cex = 0.8, col = "darkred")
+
+par(mfrow=c(1,1))
+
+#### SARIMA ####
+library(forecast)
 
 
+# --- 1. Preparazione Scores ---
+scores_all <- chl_pca$scores[, 1:4]
+n_tot <- nrow(scores_all)
+n_val <- 7  
 
+train_set <- scores_all[1:(n_tot - n_val), ]
+val_set   <- scores_all[(n_tot - n_val + 1):n_tot, ]
 
+# --- 2. Predizione con SARIMA ---
+# Creiamo una matrice vuota per ospitare le previsioni delle 4 PC
+scores_predetti <- matrix(NA, nrow = n_val, ncol = 4)
+colnames(scores_predetti) <- paste0("PC", 1:4)
 
+for(i in 1:4) {
+  # auto.arima trova il miglior modello (inclusa stagionalità se presente)
+  # Se conosci la frequenza (es. 365 per dati giornalieri), usa: ts(train_set[,i], frequency = ...)
+  fit_sarima <- auto.arima(train_set[, i], seasonal = TRUE)
+  
+  # Predizione n-step ahead
+  pred_obj <- forecast(fit_sarima, h = n_val)
+  scores_predetti[, i] <- as.numeric(pred_obj$mean)
+}
 
+# Verifica dimensioni: deve essere [7 x 4]
+print(dim(scores_predetti))
 
+# --- 3. Ricostruzione Funzionale ---
+# Coefficienti delle armoniche e della media
+coef_armoniche <- chl_pca$harmonics$coefs[, 1:4] 
+coef_media <- as.vector(chl_pca$meanfd$coefs)
 
+# Ricostruzione (Matrice di coefficienti per le 7 nuove curve)
+# scores_predetti è [7 x 4], coef_armoniche è [nbasis x 4]
+coef_predetti <- coef_armoniche %*% t(scores_predetti)
+coef_finali <- coef_predetti + coef_media
+
+# Creazione dell'oggetto funzionale
+curve_predette_fd <- fd(coef_finali, basis_obj)
+
+# --- 4. Plot Backtesting Scores ---
+par(mfrow = c(4, 1), mar = c(4, 4, 2, 1))
+for(i in 1:4) {
+  plot(1:n_tot, scores_all[, i], type = "l", col = "black", 
+       main = paste("SARIMA Backtesting PC", i), xlab = "Tempo", ylab = "Score")
+  lines((n_tot - n_val + 1):n_tot, scores_predetti[, i], 
+        col = "blue", lwd = 2, type = "b", pch = 19) # Blu per SARIMA
+  abline(v = n_tot - n_val + 0.5, col = "red", lty = 2)
+}
+
+# --- 5. Plot Confronto Profili Funzionali ---
+par(mfrow = c(4, 2), mar = c(4, 4, 2, 1))
+for (i in 1:n_val) {
+  # Curva reale
+  plot(chl_fd[(n_tot - n_val + i)], 
+       col = "black", lwd = 2, ylim = c(0, 5), 
+       main = paste("SARIMA: Step", i))
+  
+  # Curva predetta
+  plot(curve_predette_fd[i], 
+       col = "blue", lty = 2, lwd = 2, add = TRUE)
+  
+  legend("topright", 
+         legend = c("Reale", "SARIMA"), 
+         col = c("black", "blue"), lty = c(1, 2), 
+         cex = 0.7, bty = "n")
+}
+
+err_var   <- calcola_rmse_giornaliero(curve_reali, curve_predette_fd)
+# 2. Plot dell'errore
+plot(1:length(err_var), err_var, 
+     type = "b",               # Linea con punti
+     pch = 19,                 # Pallino pieno
+     col = "blue",              # Colore rosso per il VAR
+     lwd = 2,                  # Spessore linea
+     xlab = "Giorno di Previsione (Step-ahead)", 
+     ylab = "RMSE Funzionale",
+     main = "Andamento Errore di Previsione - Modello VAR",
+     panel.first = grid(),
+     ylim = c(0, 3))     # Aggiunge una griglia sotto i punti
+
+# Opzionale: Aggiungi i valori numerici sopra i punti per precisione
+text(1:length(err_var), err_var, labels = round(err_var, 4), pos = 3, cex = 0.8, col = "darkred")
+
+par(mfrow=c(1,1))
 
 #### XGBoost ####
 library(xgboost)
 
-# Parametri
-n_val <- 7       # Ultime 5 giorni per validazione
-n_lag <- 7      # Usiamo le 2 giorni precedenti per predire la successiva
-n_pcs <- ncol(scores_all)
+# --- 1. Preparazione Dati ---
+scores_all <- chl_pca$scores[, 1:4]
+n_tot <- nrow(scores_all)
+n_val <- 7
+n_lag <- 7 # Usiamo gli ultimi 7 giorni per prevedere il prossimo
 
-# Funzione per creare i lag
-create_lags <- function(data, lags) {
-  X <- embed(data, lags + 1)
-  y <- X[, 1:ncol(data)]                # Target (tutte le PC al tempo t)
-  features <- X[, (ncol(data)+1):ncol(X)] # Predittori (PC ai tempi t-1, t-2...)
-  return(list(y = y, X = features))
+# Funzione per creare il dataset con lag
+prepare_xgb_data <- function(serie, lags) {
+  X <- embed(serie, lags + 1)
+  return(list(y = X[, 1], x = X[, -1]))
 }
 
-data_lagged <- create_lags(scores_all, n_lag)
+# --- 2. Training e Predizione Ricorsiva ---
+scores_predetti <- matrix(NA, nrow = n_val, ncol = 4)
 
-# split
-n_rows <- nrow(data_lagged$X)
-train_idx <- 1:(n_rows - n_val)
-
-X_train <- data_lagged$X[train_idx, ]
-y_train <- data_lagged$y[train_idx, ]
-
-X_val   <- data_lagged$X[(n_rows - n_val + 1):n_rows, ]
-y_val   <- data_lagged$y[(n_rows - n_val + 1):n_rows, ]
-
-
-modelli_xgb <- list()
-previsioni_val <- matrix(NA, nrow = n_val, ncol = n_pcs)
-
-for(i in 1:n_pcs) {
-  # Creazione DMatrix (formato ottimizzato per XGBoost)
-  dtrain <- xgb.DMatrix(data = X_train, label = y_train[, i])
-  dval   <- xgb.DMatrix(data = X_val, label = y_val[, i])
+for(p in 1:4) {
+  serie_pc <- scores_all[, p]
+  train_data <- serie_pc[1:(n_tot - n_val)]
   
-  # Fit del modello
-  params <- list(objective = "reg:squarederror", eta = 0.1, max_depth = 4)
+  # Preparazione training set
+  data_split <- prepare_xgb_data(train_data, n_lag)
   
-  fit <- xgb.train(params = params, 
-                   data = dtrain, 
-                   nrounds = 100, 
-                   watchlist = list(train = dtrain, eval = dval),
-                   early_stopping_rounds = 10,
-                   print_every_n = 0)
+  # Fit del modello XGBoost
+  bst <- xgboost(data = data_split$x, 
+                 label = data_split$y, 
+                 nrounds = 50, 
+                 objective = "reg:squarederror",
+                 verbose = 0)
   
-  modelli_xgb[[i]] <- fit
+  # Predizione Ricorsiva
+  # Partiamo dagli ultimi dati del training per prevedere il primo step di validazione
+  current_input <- rev(tail(train_data, n_lag)) 
   
-  # Predizione sul set di validazione
-  previsioni_val[, i] <- predict(fit, X_val)
+  for(s in 1:n_val) {
+    # Predizione dello step successivo
+    pred <- predict(bst, matrix(current_input, nrow = 1))
+    scores_predetti[s, p] <- pred
+    
+    # Aggiornamento input: togliamo il più vecchio, aggiungiamo la nuova predizione
+    current_input <- c(pred, current_input[-n_lag])
+  }
+}
+
+# --- 3. Ricostruzione Funzionale ---
+coef_armoniche <- chl_pca$harmonics$coefs[, 1:4] 
+coef_media <- as.vector(chl_pca$meanfd$coefs)
+
+coef_predetti <- coef_armoniche %*% t(scores_predetti)
+coef_finali <- coef_predetti + coef_media
+curve_predette_fd <- fd(coef_finali, basis_obj)
+
+# --- 4. Plot Backtesting Scores ---
+par(mfrow = c(4, 1), mar = c(4, 4, 2, 1))
+for(i in 1:4) {
+  plot(1:n_tot, scores_all[, i], type = "l", col = "black", 
+       main = paste("XGBoost Backtesting PC", i))
+  lines((n_tot - n_val + 1):n_tot, scores_predetti[, i], 
+        col = "darkgreen", lwd = 2, type = "b", pch = 19)
+  abline(v = n_tot - n_val + 0.5, col = "blue", lty = 2)
+}
+
+# --- 5. Plot Confronto Profili Funzionali ---
+par(mfrow = c(4, 2), mar = c(4, 4, 2, 1))
+for (i in 1:n_val) {
+  plot(chl_fd[(n_tot - n_val + i)], col = "black", lwd = 2, ylim = c(0, 5), 
+       main = paste("XGBoost: Step", i))
+  plot(curve_predette_fd[i], col = "darkgreen", lty = 2, lwd = 2, add = TRUE)
+  
+  legend("topright", legend = c("Reale", "XGBoost"), 
+         col = c("black", "darkgreen"), lty = c(1, 2), cex = 0.7, bty = "n")
 }
 
 
-par(mfrow = c(n_pcs, 1), mar = c(4, 4, 2, 1))
 
-for(i in 1:n_pcs) {
-  plot(y_val[, i], type = "b", pch = 19, col = "black", 
-       main = paste("Validation PC", i), xlab = "Settimana di test", ylab = "Score")
-  lines(previsioni_val[, i], type = "b", pch = 18, col = "orange", lwd = 2)
-  legend("topright", legend = c("Reale", "XGBoost"), col = c("black", "orange"), lty = 1, bty = "n")
+calcola_rmse_giornaliero <- function(curve_reali, curve_predette) {
+  # Calcola la differenza tra gli oggetti funzionali
+  diff_fd <- curve_reali - curve_predette
+  
+  # Calcola l'integrale del quadrato della differenza (L2 norm squared)
+  # inprod() calcola la matrice degli integrali incrociati. 
+  # A noi interessano solo gli elementi sulla diagonale (giorno 1 vs giorno 1, ecc.)
+  integrali_quadrati <- diag(inprod(diff_fd, diff_fd))
+  
+  # Restituisce la radice quadrata (RMSE)
+  return(sqrt(integrali_quadrati))
 }
+
+
+err_var   <- calcola_rmse_giornaliero(curve_reali, curve_predette_fd)
+# 2. Plot dell'errore
+plot(1:length(err_var), err_var, 
+     type = "b",               # Linea con punti
+     pch = 19,                 # Pallino pieno
+     col = "darkgreen",              # Colore rosso per il VAR
+     lwd = 2,                  # Spessore linea
+     xlab = "Giorno di Previsione (Step-ahead)", 
+     ylab = "RMSE Funzionale",
+     main = "Andamento Errore di Previsione - Modello VAR",
+     panel.first = grid(),
+     ylim = c(0, 3))    
+
+# Opzionale: Aggiungi i valori numerici sopra i punti per precisione
+text(1:length(err_var), err_var, labels = round(err_var, 4), pos = 3, cex = 0.8, col = "darkred")
+
+par(mfrow=c(1,1))
+#### MULTIVARIATE XGBoost ####
+library(xgboost)
+library(viridis)
+
+# --- 1. Preparazione Dati Multivariati ---
+scores_all <- chl_pca$scores[, 1:4]
+n_tot <- nrow(scores_all)
+n_val <- 7
+n_lag <- 7 
+
+# Funzione per creare il dataset di training (X = tutti i lag di tutte le PC)
+prepare_multivariate_train <- function(data, lags) {
+  X_list <- list()
+  for(l in 1:lags) {
+    # Lag l della matrice intera
+    X_list[[l]] <- data[(lags - l + 1):(nrow(data) - l), ]
+  }
+  X <- do.call(cbind, X_list)
+  Y <- data[(lags + 1):nrow(data), ]
+  return(list(X = X, Y = Y))
+}
+
+# --- 2. Training Unico (No Rolling) ---
+train_data <- scores_all[1:(n_tot - n_val), ]
+d_train <- prepare_multivariate_train(train_data, n_lag)
+
+# Alleniamo 4 modelli (uno per ogni PC target), ma ognuno vede i lag di tutte le PC
+models_list <- list()
+for (p in 1:4) {
+  models_list[[p]] <- xgboost(data = d_train$X, 
+                              label = d_train$Y[, p], 
+                              nrounds = 50, 
+                              objective = "reg:squarederror", 
+                              verbose = 0)
+}
+
+# --- 3. Predizione Ricorsiva (Orizzonte 7 giorni) ---
+scores_predetti_xgb <- matrix(NA, nrow = n_val, ncol = 4)
+
+# L'input iniziale sono gli ultimi n_lag giorni del training set
+# Lo trasformiamo in un vettore riga che contiene [Lag1_PC1..4, Lag2_PC1..4, ...]
+current_history <- train_data[(nrow(train_data) - n_lag + 1):nrow(train_data), ]
+
+for (s in 1:n_val) {
+  # Prepariamo il vettore di input invertendo l'ordine per avere i lag corretti (Lag 1, Lag 2...)
+  # La struttura deve essere identica a quella usata in d_train$X
+  input_row <- matrix(as.vector(t(current_history[nrow(current_history):1, ])), nrow = 1)
+  
+  # Prediciamo le 4 PC per lo step s
+  step_preds <- numeric(4)
+  for (p in 1:4) {
+    step_preds[p] <- predict(models_list[[p]], input_row)
+  }
+  
+  # Salviamo il risultato
+  scores_predetti_xgb[s, ] <- step_preds
+  
+  # Aggiorniamo la storia: togliamo il giorno più vecchio e aggiungiamo la previsione appena fatta
+  current_history <- rbind(current_history[-1, ], step_preds)
+}
+
+# --- 4. Ricostruzione Funzionale ---
+coef_pred_xgb <- chl_pca$harmonics$coefs[, 1:4] %*% t(scores_predetti_xgb)
+coef_finali_xgb <- coef_pred_xgb + as.vector(chl_pca$meanfd$coefs)
+curve_xgb_fd <- fd(coef_finali_xgb, basis_obj)
+
+# --- 5. Plot Risultati ---
+par(mfrow = c(4, 2), mar = c(4, 4, 2, 1))
+for (i in 1:n_val) {
+  plot(chl_fd[n_tot - n_val + i], col = "black", lwd = 2, ylim = c(0, 5),
+       main = paste("Multi-XGBoost Statico: Giorno", i))
+  plot(curve_xgb_fd[i], col = "darkgreen", lty = 2, lwd = 2, add = TRUE)
+  
+  legend("topright", legend = c("Reale", "XGBoost Statico"), 
+         col = c("black", "darkgreen"), lty = c(1, 2), cex = 0.7, bty = "n")
+}
+
+err_var   <- calcola_rmse_giornaliero(curve_reali, curve_xgb_fd)
+# 2. Plot dell'errore
+plot(1:length(err_var), err_var, 
+     type = "b",               # Linea con punti
+     pch = 19,                 # Pallino pieno
+     col = "darkgreen",              # Colore rosso per il VAR
+     lwd = 2,                  # Spessore linea
+     xlab = "Giorno di Previsione (Step-ahead)", 
+     ylab = "RMSE Funzionale",
+     main = "Andamento Errore di Previsione - Modello VAR",
+     panel.first = grid(),
+     ylim = c(0, 3))    
+
+# Opzionale: Aggiungi i valori numerici sopra i punti per precisione
+text(1:length(err_var), err_var, labels = round(err_var, 4), pos = 3, cex = 0.8, col = "darkred")
+
+par(mfrow=c(1,1))
+
+#### VECM ####
+
+library(tsDyn)
+library(fda)
+
+# --- 1. Preparazione Dati ---
+scores_all <- chl_pca$scores[, 1:4]
+n_tot <- nrow(scores_all)
+n_val <- 7
+n_train <- n_tot - n_val
+
+train_set <- scores_all[1:n_train, ]
+val_set   <- scores_all[(n_train + 1):n_tot, ]
+
+# --- 2. Fit del Modello VECM ---
+# lags: numero di ritardi (equivalente a p-1 nel VAR)
+# r: rango di cointegrazione (quante relazioni di lungo periodo esistono)
+# Iniziamo con r=1 (ipotesi conservativa di un equilibrio comune)
+fit_vecm <- VECM(train_set, lag = 7, r = 3, estim = "ML")
+
+# --- 3. Predizione Ricorsiva ---
+# La funzione predict di tsDyn genera automaticamente la previsione n-step ahead
+pred_vecm_obj <- predict(fit_vecm, n.ahead = n_val)
+
+# Estraiamo i punteggi predetti (matrice 7x4)
+scores_predetti_vecm <- as.matrix(pred_vecm_obj)
+
+# --- 4. Ricostruzione Funzionale ---
+coef_armoniche <- chl_pca$harmonics$coefs[, 1:4]
+coef_media <- as.vector(chl_pca$meanfd$coefs)
+
+# coef_predetti = [nbasis x 4] * [4 x 7] = [nbasis x 7]
+coef_pred_vecm <- coef_armoniche %*% t(scores_predetti_vecm)
+coef_finali_vecm <- coef_pred_vecm + coef_media
+
+curve_vecm_fd <- fd(coef_finali_vecm, basis_obj)
+
+# --- 5. Plot di Validazione ---
+par(mfrow = c(4, 2), mar = c(4, 4, 2, 1))
+for (i in 1:n_val) {
+  idx_reale <- n_train + i
+  plot(chl_fd[idx_reale], col = "black", lwd = 2, ylim = c(0, 5),
+       main = paste("VECM: Giorno", i))
+  
+  # Curva predetta in blu scuro
+  plot(curve_vecm_fd[i], col = "darkblue", lty = 2, lwd = 2, add = TRUE)
+  
+  legend("topright", legend = c("Reale", "VECM"), 
+         col = c("black", "darkblue"), lty = c(1, 2), cex = 0.7, bty = "n")
+}
+err_var   <- calcola_rmse_giornaliero(curve_reali, curve_vecm_fd)
+# 2. Plot dell'errore
+plot(1:length(err_var), err_var, 
+     type = "b",               # Linea con punti
+     pch = 19,                 # Pallino pieno
+     col = "darkblue",              # Colore rosso per il VAR
+     lwd = 2,                  # Spessore linea
+     xlab = "Giorno di Previsione (Step-ahead)", 
+     ylab = "RMSE Funzionale",
+     main = "Andamento Errore di Previsione - Modello VAR",
+     panel.first = grid(),
+     ylim = c(0, 3))    
+
+# Opzionale: Aggiungi i valori numerici sopra i punti per precisione
+text(1:length(err_var), err_var, labels = round(err_var, 4), pos = 3, cex = 0.8, col = "darkred")
+
+par(mfrow=c(1,1))
+
+
+library(urca)
+
+# Converti in oggetto Time Series (frequenza 1 se giornalieri senza stagionalità forte)
+train_ts <- ts(train_set)
+
+# Esegui il test di Johansen
+# K deve essere almeno 2. Usiamo 7 per coerenza con i tuoi lag precedenti.
+johan_test <- ca.jo(train_ts, type = "trace", K = 7, spec = "transitory")
+
+summary(johan_test)
+
+
 
 

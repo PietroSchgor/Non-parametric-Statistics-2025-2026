@@ -1,3 +1,6 @@
+rm(list=ls())
+graphics.off()
+cat("\014")
 
 setwd("~/uni/2025-2026/non param/progetto/clorofilla/Non-parametric-Statistics-2025-2026")
 

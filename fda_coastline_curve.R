@@ -1,12 +1,16 @@
+rm(list=ls())
+graphics.off()
+cat("\014")
+
 
 setwd("~/uni/2025-2026/non param/progetto/clorofilla/Non-parametric-Statistics-2025-2026")
+chl_bordo_x_weekly <- read.csv("dataset/chl_bordo_x_weekly.csv")
 
 
-
+head(chl_bordo_x_weekly)
 # 1. Caricamento e Preparazione Dati -------------------------------------------
 library(tidyverse)
 
-chl_bordo_x_weekly <- read.csv("dataset/chl_bordo_x_weekly.csv")
 
 week <- chl_bordo_x_weekly$Week_Number
 x <- sort(unique(chl_bordo_x_weekly$distanza_cumulata))
@@ -16,10 +20,8 @@ plot(chl_bordo_x_weekly$Lon, chl_bordo_x_weekly$Lat)
 
 
 matrice_df <- chl_bordo_x_weekly %>%
-  select(Week_Number, distanza_cumulata, Chl) %>%
-  # Ordina prima i dati per sicurezza
+  dplyr::select(Week_Number, distanza_cumulata, Chl) %>%
   arrange(Week_Number, distanza_cumulata) %>% 
-  # Trasforma in formato largo
   pivot_wider(names_from = distanza_cumulata, values_from = Chl)
 
 # Per convertirla in una vera matrice numerica (togliendo la colonna Week_Number)
@@ -231,7 +233,7 @@ for(i in 1:n_pcs) {
 #### regressione armonica ####
 
 # Creiamo l'asse del tempo (settimane)
-t <- 1:nrow(pca_scores)
+t <- 1:nrow(scores_all)
 frequenza <- 2 * pi / 52.18  # Ciclo annuale
 
 # Creiamo i predittori seno e coseno
@@ -239,7 +241,7 @@ s1 <- sin(frequenza * t)
 c1 <- cos(frequenza * t)
 
 # Prepariamo il dataframe per la PC1
-df_armonico <- data.frame(PC1 = pca_scores[, 1], s1 = s1, c1 = c1)
+df_armonico <- data.frame(PC1 = scores_all[, 1], s1 = s1, c1 = c1)
 
 # Modello: PC1 = Intercetta + A*sin(wt) + B*cos(wt)
 fit_armonico <- lm(PC1 ~ s1 + c1, data = df_armonico)
@@ -247,7 +249,7 @@ fit_armonico <- lm(PC1 ~ s1 + c1, data = df_armonico)
 summary(fit_armonico)
 
 # Creiamo il tempo futuro (prossime 10 settimane)
-t_futuro <- (nrow(pca_scores) + 1):(nrow(pca_scores) + 10)
+t_futuro <- (nrow(scores_all) + 1):(nrow(scores_all) + 10)
 df_futuro <- data.frame(
   s1 = sin(frequenza * t_futuro),
   c1 = cos(frequenza * t_futuro)
@@ -256,8 +258,9 @@ df_futuro <- data.frame(
 # Predizione
 pred_futura <- predict(fit_armonico, df_futuro)
 
+par(mfrow = c(1,1))
 # Visualizzazione
-plot(t, pca_scores[, 1], pch = 19, xlim = c(1, 63), ylim = range(pca_scores[,1]*1.2),
+plot(t, scores_all[, 1], pch = 19, xlim = c(1, 63), ylim = range(scores_all[,1]*1.2),
      xlab = "Settimana", ylab = "Score PC1", main = "Modello Armonico (Stagionale)")
 lines(t, fitted(fit_armonico), col = "blue", lwd = 2) # Fit storico
 lines(t_futuro, pred_futura, col = "red", lwd = 2, lty = 2) # Previsione

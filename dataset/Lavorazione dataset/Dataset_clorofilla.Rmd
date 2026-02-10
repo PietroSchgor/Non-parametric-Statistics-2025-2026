@@ -11,7 +11,7 @@ library(terra)
 library(tidyverse)
 library(lubridate)
 
-nome_file <- "raw_clorofilla_31052022_31052023.nc"
+nome_file <- "cmems_mod_med_bgc-plankton_my_4.2km_P1D-m_1770738700917.nc"
 r <- rast(nome_file)
 
 # --- 2. Ritaglio Area ---
@@ -48,17 +48,17 @@ mappa_date <- data.frame(
 # --- 6. Join Finale ---
 dataset_statistico_clorofilla <- df_long %>%
   left_join(mappa_date, by = "time_index") %>%
-  select(Date, Lon = x, Lat = y, Chl = chl, Phyc = phyc) # Rinomina maiuscolo per eleganza
+  select(Date, Lon = x, Lat = y, Chl = chl)#, Phyc = phyc) # Rinomina maiuscolo per eleganza
 
 # Controllo
 head(dataset_statistico_clorofilla)
 
-# --- 9. Non voglio la colonna del Fitoplankton ---
-# Rimuovi la colonna Phyc
-dataset_statistico_clorofilla <- dataset_statistico_clorofilla %>%
-  select(-Phyc)
+## --- 9. Non voglio la colonna del Fitoplankton ---
+## Rimuovi la colonna Phyc
+#dataset_statistico_clorofilla <- dataset_statistico_clorofilla %>%
+#  select(-Phyc)
 
-# Controlla che sia sparita
+# Contrsolla che sia sparita
 head(dataset_statistico_clorofilla)
 ```
 
@@ -68,6 +68,7 @@ Facciamo un plot per vedere l'intensità delle clorofille. Mappa della media: Pe
 library(ggplot2)
 library(dplyr)
 library(viridis) # Per le scale di colori scientifiche
+library(dplyr)
 
 # 1. Calcola la media per ogni pixel (Lat/Lon) su tutto l'anno
 mappa_media <- dataset_statistico_clorofilla %>%
@@ -116,4 +117,30 @@ ggplot(dati_giorno, aes(x = Lon, y = Lat, fill = Chl)) +
     y = "Latitudine"
   ) +
   theme_minimal()
+```
+
+```{r taglio la Croazia}
+
+# Filtriamo escludendo (con il punto esclamativo !) la combinazione indesiderata
+dataset_statistico_clorofilla_3anni_cut <- dataset_statistico_clorofilla %>%
+  filter(!(Lon > 13 & Lat < 45.6))
+```
+
+```{r plot after-cut}
+# 1. Calcola la media per ogni pixel (Lat/Lon) su tutto l'anno
+mappa_media <- dataset_statistico_clorofilla_3anni_cut %>%
+  group_by(Lon, Lat) %>%
+  summarise(Mean_Chl = mean(Chl, na.rm = TRUE))
+
+# 2. Plotta la media
+ggplot(mappa_media, aes(x = Lon, y = Lat, fill = Mean_Chl)) +
+  geom_tile() +
+  scale_fill_viridis_c(option = "magma", trans = "log10", name = "Media Chl") + # 'magma' va dal nero al bianco/giallo
+  coord_fixed(ratio = 1.3) +
+  labs(title = "Distribuzione Media della Clorofilla (2022-2023)") +
+  theme_minimal()
+```
+
+```{r write.csv}
+write.csv(dataset_statistico_clorofilla_3anni_cut, "dataset_clorofilla_filtrata_3anni.csv", row.names = FALSE)
 ```

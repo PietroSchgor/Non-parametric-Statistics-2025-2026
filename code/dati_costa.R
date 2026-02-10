@@ -32,6 +32,7 @@ punti_uniti <- st_union(punti_sf)
 bordo_concavo <- st_concave_hull(punti_uniti, ratio = 0.05)
 
 # Visualizza
+par(mfrow=c(1,1))
 plot(st_geometry(bordo_concavo), border = "red", lwd = 2)
 points(st_coordinates(punti_sf), col = "grey")
 
@@ -45,9 +46,15 @@ bordo_df <- as.data.frame(coordinate_bordo) %>%
 
 summary(bordo_df)
 
+bordo_croatia <- bordo_df %>%
+  filter(Lat <=45.6, Lon >= 13)
 
 bordo_df_clean <- bordo_df %>%
-  filter(Lat >= 44.10, Lon <= 13.90)
+  filter(Lat >= 44.10, Lon <= 13.90) %>%
+  anti_join(bordo_croatia, by = c("Lat", "Lon"))
+  
+
+
 
 # 1. Disegna il confine completo
 plot(bordo_df_clean, col = "blue") # "l" sta per linea
@@ -167,7 +174,7 @@ print(plot_distanza)
 # Write CSV ---------------------------------------------------------------
 
 # Se vuoi salvare il risultato in un file CSV:
-#write.csv(dataset_ordinato_distanza, "dataset/bordo_con_distanze.csv", row.names = FALSE)
+write.csv(dataset_ordinato_distanza, "dataset/bordo_con_distanze.csv", row.names = FALSE)
 
 
 # Merge data_weekly -------------------------------------------------------

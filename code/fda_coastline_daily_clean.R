@@ -20,29 +20,102 @@ library(urca)
 # 1. Data Loading and Pre-processing
 # ------------------------------------------------------------------------------
 
+data <- read.csv("dataset/dataset_clorofilla_filtrata_3anni.csv")
+data$Lon <- round(data$Lon, 3)
+
+# Arrotonda la colonna Latitudine
+data$Lat <- round(data$Lat, 3)
+
+dataset_ordinato_distanza <- read.csv("dataset/bordo_con_distanze.csv")
+data_pos_x_daily <- data %>%
+  inner_join(dataset_ordinato_distanza, by = c("Lat", "Lon"))
+
+chl_pos_x_daily <- data_pos_x_daily %>%
+  dplyr::select(Date, Lat, Lon, Chl, distanza_cumulata)
+
+chl_pos_x_daily$Date <- as.Date(chl_pos_x_daily$Date)
+
+x <- sort(unique(chl_pos_x_daily$distanza_cumulata))
+
+
+plot(chl_pos_x_daily$Lon, chl_pos_x_daily$Lat)
+
+
+
+matrice_df <- chl_pos_x_daily %>%
+  dplyr::select(Date, distanza_cumulata, Chl) %>%
+  # Ordina prima i dati per sicurezza
+  arrange(Date, distanza_cumulata) %>%
+  # Trasforma in formato largo
+  pivot_wider(names_from = distanza_cumulata, values_from = Chl)
+
+# Per convertirla in una vera matrice numerica (togliendo la colonna Date)
+matrice_finale <- as.matrix(matrice_df[,-1])
+rownames(matrice_finale) <- matrice_df$Date
+
+sum(is.na(matrice_finale))
+# # Salvataggio standard (separatore: virgola, decimale: punto)
+write.csv(matrice_finale, "dataset/matrix_X_fda_daily.csv", row.names = TRUE)
+
 # Load the daily Chlorophyll matrix and coordinate distances
 matrice_finale <- read.csv("dataset/matrix_X_fda_daily.csv", row.names = 1)
 matrice_finale <- as.matrix(matrice_finale)
 
 dataset_ordinato_distanza <- read.csv("dataset/bordo_con_distanze.csv")
 x <- sort(unique(dataset_ordinato_distanza$distanza_cumulata))
-plot(dataset_ordinato_distanza$Lon, dataset_ordinato_distanza$Lat)
-# Visualizing Raw Data
+
+pos_mete <- read.csv("dataset/dataset_mete_approssimate.csv")
+# 1. Definiamo la lista delle località più rinomate
+mete_top <- c("Grado", "Lignano Sabbiadoro", "Bibione", "Caorle", 
+              "Lido di Jesolo", "Lido di Venezia", "Sottomarina (Chioggia)", 
+              "Milano Marittima", "Cervia", "Cesenatico", "Rimini")
+
+# 2. Creiamo il dataset filtrato
+# Assumendo che il tuo dataset si chiami 'pos_mete'
+pos_mete <- pos_mete[pos_mete$Localita_Originale %in% mete_top, ]
+# Plot dello sfondo
+plot(dataset_ordinato_distanza$Lon, dataset_ordinato_distanza$Lat, col = "black", pch = 20)
+
+# Aggiungi i punti
+points(pos_mete$Lon, pos_mete$Lat, col = "red", pch = 16)
+
+# Aggiungi i NOMI
+text(pos_mete$Lon, pos_mete$Lat, 
+     labels = pos_mete$Localita_Originale, 
+     pos = 3,      # Posizione: 1=sotto, 2=sinistra, 3=sopra, 4=destra
+     cex = 0.7,    # Dimensione del testo
+     col = "red")  # Colore del testo# Visualizing Raw Data
+
 n_giorni <- nrow(matrice_finale)
 colori <- viridis(n_giorni)
 
-par(mar = c(5, 4, 4, 6)) 
+# 1. Imposta i margini (lasciamo spazio a destra per la color bar)
+par(mar = c(7, 4, 4, 6)) # Aumentato il primo valore per far stare i nomi ruotati
+
+# 2. Plot principale
 matplot(x, t(matrice_finale), 
         type = 'l', lty = 1, lwd = 2, col = colori,
         xlab = "Cumulative Distance", ylab = "Chl Content",
         main = "Raw Daily Chlorophyll Profiles")
 
-# Add a color bar for days
+# 3. Aggiungi linee verticali tratteggiate per ogni località
+abline(v = pos_mete$distanza_cumulata, col = "gray80", lty = 2)
+
+# 4. Aggiungi i nomi delle località sull'asse X
+# las = 2 ruota il testo di 90 gradi per evitare sovrapposizioni
+axis(1, at = pos_mete$distanza_cumulata, 
+     labels = pos_mete$Localita_Originale, 
+     las = 2, cex.axis = 0.7, col.ticks = "red")
+
+# 5. Aggiungi la color bar per i giorni (richiede il pacchetto fields)
+library(fields)
 image.plot(legend.only = TRUE, 
            zlim = range(as.numeric(rownames(matrice_finale))), 
            col = colori, 
            legend.lab = "Day Index", 
            legend.line = 3)
+
+
 
 # ------------------------------------------------------------------------------
 # 2. Functional Data Analysis (Smoothing)
@@ -210,7 +283,7 @@ par(mfrow = c(4, 2))
 for (i in 1:n_val) {
   plot(chl_fd[n_tot - n_val + i], col = "black", lwd = 2, ylim = c(0, 5),
        main = paste("VECM Validation: Day", i))
-  plot(curve_var_fd[i], col = "red", lty = 2, lwd = 2, add = TRUE)
+  plot(curve_xgb_fd[i], col = "red", lty = 2, lwd = 2, add = TRUE)
 }
 par(mfrow = c(1, 1))
 

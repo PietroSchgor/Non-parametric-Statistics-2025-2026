@@ -65,10 +65,11 @@ dataset_ordinato_distanza <- read.csv("dataset/bordo_con_distanze.csv")
 x <- sort(unique(dataset_ordinato_distanza$distanza_cumulata))
 
 pos_mete <- read.csv("dataset/dataset_mete_approssimate.csv")
+pos_mete <- pos_mete[pos_mete$Localita_Originale != "Milano Marittima", ]
 # 1. Definiamo la lista delle località più rinomate
 mete_top <- c("Grado", "Lignano Sabbiadoro", "Bibione", "Caorle", 
               "Lido di Jesolo", "Lido di Venezia", "Sottomarina (Chioggia)", 
-              "Milano Marittima", "Cervia", "Cesenatico", "Rimini")
+              "Cervia", "Cesenatico", "Rimini")
 
 # 2. Creiamo il dataset filtrato
 # Assumendo che il tuo dataset si chiami 'pos_mete'
@@ -95,8 +96,9 @@ par(mar = c(7, 4, 4, 6)) # Aumentato il primo valore per far stare i nomi ruotat
 # 2. Plot principale
 matplot(x, t(matrice_finale), 
         type = 'l', lty = 1, lwd = 2, col = colori,
-        xlab = "Cumulative Distance", ylab = "Chl Content",
-        main = "Raw Daily Chlorophyll Profiles")
+        xlab = "", ylab = "Chl Content",
+        main = "Raw Daily Chlorophyll Profiles",
+        xaxt = "n")
 
 # 3. Aggiungi linee verticali tratteggiate per ogni località
 abline(v = pos_mete$distanza_cumulata, col = "gray80", lty = 2)
@@ -108,7 +110,6 @@ axis(1, at = pos_mete$distanza_cumulata,
      las = 2, cex.axis = 0.7, col.ticks = "red")
 
 # 5. Aggiungi la color bar per i giorni (richiede il pacchetto fields)
-library(fields)
 image.plot(legend.only = TRUE, 
            zlim = range(as.numeric(rownames(matrice_finale))), 
            col = colori, 
@@ -156,10 +157,29 @@ names(var_spiegata) <- paste0("PC", 1:n_comp)
 print("Explained Variance by PC:")
 print(round(var_spiegata, 3))
 
-# Scree Plot
+# Scree Plot (Cumulative)
+# xaxt = "n" nasconde l'asse x automatico
 plot(cumsum(var_spiegata), type = "b", pch = 19, 
      xlab = "Number of PCs", ylab = "Cumulative Proportion",
-     main = "FPCA Scree Plot")
+     main = "FPCA Scree Plot",
+     xaxt = "n",
+     xlim = c(0.7, 4.3),
+     ylim = c(0.7, 1.0)) 
+
+# Aggiungi l'asse X manuale solo con interi
+# side = 1 (basso), at = posizioni (1, 2, 3, 4)
+axis(side = 1, at = 1:n_comp, labels = 1:n_comp)
+
+# Aggiungi una griglia per leggere meglio (opzionale ma consigliato)
+grid()
+
+# AGGIUNTA DELLE FLAG (Etichette)
+text(x = 1:n_comp,          # Posizione orizzontale (1, 2, 3, 4)
+     y = cumsum(var_spiegata),           # Posizione verticale (il valore del punto)
+     labels = round(cumsum(var_spiegata), 3), # Il testo da scrivere (arrotondato a 3 decimali)
+     pos = 3,               # 3 significa "sopra il punto" (1=sotto, 2=sinistra, 4=destra)
+     cex = 0.8,             # Grandezza del testo (0.8 è un po' più piccolo del normale)
+     col = "black")          # Colore del testo
 
 # ------------------------------------------------------------------------------
 # 4. Forecasting Preparation

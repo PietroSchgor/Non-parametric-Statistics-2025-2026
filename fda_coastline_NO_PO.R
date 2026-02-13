@@ -17,11 +17,14 @@ library(urca)
 # ------------------------------------------------------------------------------
 # 
 # data <- read.csv("dataset/dataset_clorofilla_filtrata_3anni.csv")
+# 
 # # Arrotonda la colonna Longitudine
 # data$Lon <- round(data$Lon, 3)
 # 
 # # Arrotonda la colonna Latitudine
 # data$Lat <- round(data$Lat, 3)
+# 
+# data$Date <- as.Date(data$Date)
 # 
 # # Verifica il risultato
 # head(data)
@@ -51,7 +54,12 @@ library(urca)
 # 
 # # Per convertirla in una vera matrice numerica (togliendo la colonna Date)
 # matrice_finale_Po <- as.matrix(matrice_df[,-1])
-# rownames(matrice_finale_Po) <- matrice_df$Date
+# 
+# # 1. Converti la colonna in vero oggetto Date (controlla il tuo formato!)
+# matrice_df$Date <- as.Date(matrice_df$Date, format = "%Y-%m-%d") 
+# 
+# # 2. Solo ora assegna alle rownames
+# rownames(matrice_finale_Po) <- as.character(matrice_df$Date)
 # 
 # sum(is.na(matrice_finale_Po))
 # # # Salvataggio standard (separatore: virgola, decimale: punto)
@@ -88,12 +96,49 @@ text(pos_mete$Lon, pos_mete$Lat,
      )  # Colore del testo# Visualizing Raw Data
 
 
-# Visualizing Raw Data
-n_giorni <- nrow(matrice_finale_Po)
-colori <- viridis(n_giorni)
+# 1. Converti le righe in formato Data (assicurati che il formato sia corretto)
+date_oggetti <- as.Date(rownames(matrice_finale_Po))
+
+# 2. Definisci la lunghezza del ciclo (usi 265 come richiesto, o 365 per l'anno)
+ciclo <- 365 
+
+# 3. Calcola l'indice ciclico per ogni data
+# Usiamo il numero di giorni trascorsi da una data di riferimento
+giorni_da_inizio <- as.numeric(date_oggetti - min(date_oggetti))
+indici_ciclici <- (giorni_da_inizio %% ciclo) + 1
+
+# 4. Crea una tavolozza base di 265 colori
+tavolozza_base <- viridis(ciclo)
+
+# 5. Assegna a ogni riga il colore corrispondente al suo punto nel ciclo
+colori_ciclici <- tavolozza_base[indici_ciclici]
 
 par(mar = c(5, 4, 4, 6)) 
 matplot(x, t(matrice_finale_Po), 
+        type = 'l', lty = 1, lwd = 2, # lwd ridotto per chiarezza se ci sono molte linee
+        col = colori_ciclici,
+        xlab = "Cumulative Distance", ylab = "Chl Content",
+        main = paste("Chlorophyll Profiles (Cycle:", ciclo, "days)"))
+
+# Aggiunta località e linee (come nel tuo codice)
+abline(v = pos_mete$distanza_cumulata, col = "gray80", lty = 2)
+axis(1, at = pos_mete$distanza_cumulata, labels = pos_mete$Localita_Originale, 
+     las = 2, cex.axis = 0.7, col.ticks = "red")
+
+# Legenda: ora rappresenta la posizione all'interno del ciclo
+image.plot(legend.only = TRUE, 
+           zlim = c(1, ciclo), 
+           col = tavolozza_base, 
+           legend.lab = "Day within Cycle", 
+           legend.line = 3)
+
+
+
+n_giorni <- nrow(matrice_finale_Po)
+colori <- viridis(n_giorni)
+
+par(mar = c(5, 4, 4, 6)) 
+matplot(x, t(matrice_finale_Po), 
         type = 'l', lty = 1, lwd = 2, col = colori,
         xlab = "Cumulative Distance", ylab = "Chl Content",
         main = "Raw Daily Chlorophyll Profiles")
@@ -103,17 +148,17 @@ abline(v = pos_mete$distanza_cumulata, col = "gray80", lty = 2)
 
 # 4. Aggiungi i nomi delle località sull'asse X
 # las = 2 ruota il testo di 90 gradi per evitare sovrapposizioni
-axis(1, at = pos_mete$distanza_cumulata, 
-     labels = pos_mete$Localita_Originale, 
+axis(1, at = pos_mete$distanza_cumulata, 
+     labels = pos_mete$Localita_Originale, 
      las = 2, cex.axis = 0.7, col.ticks = "red")
 
 # Add a color bar for days
-image.plot(legend.only = TRUE, 
-           zlim = range(as.numeric(rownames(matrice_finale_Po))), 
-           col = colori, 
-           legend.lab = "Day Index", 
-           legend.line = 3)
-
+# Sostituisci il blocco della legenda con questo:
+image.plot(legend.only = TRUE, 
+           zlim = c(1, nrow(matrice_finale_Po)), # Da 1 al numero totale di giorni
+           col = colori, 
+           legend.lab = "Day Index", 
+           legend.line = 3) puoi cambiare i colori im modo che siano ciclici ogni 265 giorni
 # ------------------------------------------------------------------------------
 # 2. Functional Data Analysis (Smoothing)
 # ------------------------------------------------------------------------------
@@ -143,17 +188,33 @@ par(mfrow = c(1, 1))
 # ------------------------------------------------------------------------------
 # 3. Split e FPCA Rigorosa (SOLO su Training)
 # ------------------------------------------------------------------------------
-n_tot <- dim(matrice_finale_Po)[1]
-n_val <- 7
-n_train <- n_tot - n_val
+# Trova l'indice corrispondente a una data specifica
+date_disponibili <- as.Date(rownames(matrice_finale_Po))
+start_val <- which(date_disponibili == as.Date("2024-05-01")) # Esempio
+# Scegli il giorno di inizio della validazione (es. giorno 100)
+# Se vuoi l'ultima settimana, lasceresti: start_val <- n_tot - n_val + 1
+n_val     <- 7
 
-# Split dei dati funzionali
-train_fd <- chl_fd[1:n_train]
-val_fd   <- chl_fd[(n_train + 1):n_tot]
+# Indici per il training (tutto ciò che viene PRIMA della settimana scelta)
+# Nota: in una serie temporale, di solito non si usa ciò che viene "dopo" per predire il "prima"
+indici_train <- 1:(start_val - 1)
+indici_val   <- start_val:(start_val + n_val - 1)
+
+# Split dei coefficienti
+coef_train <- chl_fd$coefs[, indici_train]
+coef_val   <- chl_fd$coefs[, indici_val]
+
+# Ricostruzione oggetti FD
+train_fd <- fd(coef_train, basis_obj)
+val_fd   <- fd(coef_val, basis_obj)
+
+# Aggiorna i metadati (nomi delle date) per non fare confusione nei plot
+train_fd$fdnames$reps <- chl_fd$fdnames$reps[indici_train]
+val_fd$fdnames$reps   <- chl_fd$fdnames$reps[indici_val]
 
 # FPCA calcolata SOLO sul Training
 n_comp <- 4
-chl_pca_train_train <- pca.fd(train_fd, nharm = n_comp)
+chl_pca_train <- pca.fd(train_fd, nharm = n_comp)
 
 # Estrarre gli score per il training
 train_set <- chl_pca_train_train$scores[, 1:n_comp]

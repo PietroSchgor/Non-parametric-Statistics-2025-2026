@@ -158,7 +158,7 @@ image.plot(legend.only = TRUE, 
            zlim = c(1, nrow(matrice_finale_Po)), # Da 1 al numero totale di giorni
            col = colori, 
            legend.lab = "Day Index", 
-           legend.line = 3) puoi cambiare i colori im modo che siano ciclici ogni 265 giorni
+           legend.line = 3)
 # ------------------------------------------------------------------------------
 # 2. Functional Data Analysis (Smoothing)
 # ------------------------------------------------------------------------------
@@ -185,6 +185,223 @@ abline(v = tutti_i_knots, col = "gray90", lty = 3)
 rug(tutti_i_knots, col = "red", lwd = 1.5)
 par(mfrow = c(1, 1))
 
+
+
+# Installazione e caricamento del pacchetto necessario
+# install.packages("roahd")
+library(roahd)
+
+# 1. Valutazione dell'oggetto funzionale su una griglia di punti
+# Usiamo i tuoi punti 'x' (distanza cumulata)
+grid_points <- x
+matrice_valutata <- t(eval.fd(grid_points, chl_fd)) # Deve essere (n_curve x n_punti)
+
+# 2. Creazione dell'oggetto fData (formato richiesto da roahd)
+chl_fData <- fData(grid_points, matrice_valutata)
+
+
+# Impostiamo il layout per vedere entrambi i grafici
+par(mfrow = c(1, 1))
+
+# --- OUTLIERGRAM ---
+# Rileva gli outlier di SHAPE (forma)
+# Mostra la parabola teorica della relazione tra MBD e MEI
+outliergram(chl_fData, main = "Outliergram (Shape Outliers)", xlab = "MEI", ylab = "MBD")
+# 1. Definizione della parabola teorica
+
+# 1. Calcolo degli indici MEI e MBD per i tuoi dati
+mei_reali <- MEI(chl_fData)
+mbd_reali <- MBD(chl_fData)
+
+# 2. Otteniamo l'identificazione ufficiale degli outlier dal pacchetto roahd
+# (così siamo sicuri che i punti rossi corrispondano ai calcoli del modello)
+out_info <- outliergram(chl_fData, display = FALSE)
+is_outlier_shape <- 1:length(mei_reali) %in% out_info$ID_outliers
+
+# 3. Plot dell'Outliergram Completo
+# Disegniamo prima la struttura teorica
+# 1. Definizione corretta di n (numero di curve/giorni)
+n <- ncol(chl_fd$coefs) # oppure nrow(matrice_finale_Po)
+
+# 2. Coefficienti ufficiali Arribas-Gil e Romo (2014)
+a0 <- -2 / (n * (n - 1))
+a1 <- 2 * (n + 1) / (n - 1)
+a2 <- a0 # a2 è uguale ad a0 nella formula originale
+
+# 3. Calcolo della parabola teorica su una griglia di MEI (0 a 1)
+mei_seq <- seq(0, 1, length.out = 100)
+
+# Nota: il termine quadratico deve includere n^2 
+mbd_teorico <- a0 + a1 * mei_seq + a2 * (n^2) * mei_seq^2
+# 1. Estrazione dei mesi dalle date
+# Assicurati che il formato della data sia quello corretto (es. "2024-05-01")
+date_tutte <- as.Date(rownames(matrice_finale_Po))
+mesi_tutti <- as.numeric(format(date_tutte, "%m"))
+
+# 2. Definizione di una tavolozza di 12 colori per i mesi
+# 2. Definizione di una tavolozza di 12 colori per i mesi
+colori_mesi_palette <- palette.colors(12, "Paired")
+nomi_mesi <- c("Jan", "Feb", "Mar", "Apr", "May", "Jun", 
+               "Jul", "Aug", "Sep", "Oct", "Nov", "Dec")
+
+# 3. Plot della struttura dell'Outliergram (Limite e Soglia)
+plot(mei_seq, mbd_teorico, type = "l", col = "blue", lwd = 2, lty = 2,
+     xlab = "MEI", ylab = "MBD", main = "Outliergram: Outliers per Mese")
+
+lines(mei_seq, mbd_teorico - out_info$Fvalue, col = "red", lwd = 2)
+
+# 4. Sovrapponiamo i punti normali (Grigi)
+points(mei_reali[!is_outlier_shape], mbd_reali[!is_outlier_shape], 
+       pch = 20, col = alpha("gray80", 0.5))
+
+# 5. Sovrapponiamo gli Outlier colorati per mese
+# Estraiamo i mesi solo degli outlier
+mesi_out <- mesi_tutti[is_outlier_shape]
+
+points(mei_reali[is_outlier_shape], mbd_reali[is_outlier_shape], 
+       pch = 19, 
+       col = colori_mesi_palette[mesi_out], # Assegna il colore in base al mese (1-12)
+       cex = 1.5)
+
+# 6. Etichette (Opzionale: puoi mettere la data o il nome del mese)
+text(mei_reali[is_outlier_shape], mbd_reali[is_outlier_shape], 
+     labels = nomi_mesi[mesi_out], 
+     pos = 3, cex = 0.7, col = "black", font = 2)
+
+# 7. Doppia Legenda
+# Legenda 1: Struttura del grafico
+legend("topleft", 
+       legend = c("Limite Teorico", "Soglia", "Dati Normali"),
+       col = c("blue", "red", "gray80"), 
+       lty = c(2, 1, NA), pch = c(NA, NA, 20), bty = "n", cex = 0.8)
+
+# Legenda 2: Mesi (mostra solo i mesi che effettivamente hanno outlier)
+mesi_presenti <- sort(unique(mesi_out))
+legend("bottomright", 
+       legend = nomi_mesi[mesi_presenti],
+       col = colori_mesi_palette[mesi_presenti], 
+       pch = 19, title = "Mese Outlier", bty = "n", cex = 0.8, ncol = 2)
+
+grid()
+# --- FUNCTIONAL BOXPLOT ---
+# Rileva gli outlier di MAGNITUDE (scala)
+# Usa la Modified Banded Depth per definire l'inviluppo centrale
+par(mfrow = c(1, 1))
+roahd::fbplot(chl_fData, main = "Functional Boxplot (Magnitude Outliers)", xlab = "Distance", ylab = "Chl")
+
+
+# Estrazione indici outlier di forma (dall'outliergram)
+# Nota: outliergram() non restituisce direttamente gli indici in modo semplice, 
+# ma possiamo usare la funzione sottostante:
+outliers_shape <- outliergram(chl_fData, display = FALSE)$ID_outliers
+
+# Estrazione indici outlier di magnitudo (dal boxplot)
+outliers_magnitude <- fbplot(chl_fData, display = FALSE)$ID_outliers
+
+# Unione degli outlier totali
+tutti_outliers <- unique(c(outliers_shape, outliers_magnitude))
+
+cat("Indici degli outlier rilevati:", tutti_outliers, "\n")
+cat("Date corrispondenti agli outlier:", rownames(matrice_finale_Po)[tutti_outliers], "\n")
+
+library(ggplot2)
+library(scales) # Necessaria per la formattazione avanzata delle date
+
+# 1. Preparazione dei dati (English translation of categories)
+date_tutte <- as.Date(rownames(matrice_finale_Po))
+n_tot_giorni <- length(date_tutte)
+
+categoria_outlier <- rep("Normal", n_tot_giorni)
+categoria_outlier[outliers_shape] <- "Shape Outlier"
+categoria_outlier[outliers_magnitude] <- "Magnitude Outlier"
+
+# Identificazione giorni con entrambi i tipi di outlier
+entrambi <- intersect(outliers_shape, outliers_magnitude)
+if(length(entrambi) > 0) {
+  categoria_outlier[entrambi] <- "Both (Shape & Magnitude)"
+}
+
+# Creazione del dataframe
+df_outliers_time <- data.frame(
+  Date = date_tutte,
+  Type = factor(categoria_outlier, 
+                levels = c("Normal", "Shape Outlier", "Magnitude Outlier", "Both (Shape & Magnitude)")),
+  Value = 1
+)
+
+# 2. Plot Temporale (Timeline Plot)
+ggplot(df_outliers_time, aes(x = Date, y = Type, color = Type)) +
+  geom_hline(aes(yintercept = Type), color = "gray90", linewidth = 0.5) +
+  
+  # Punti per gli outlier (escludiamo i Normal per pulizia visiva)
+  geom_point(data = subset(df_outliers_time, Type != "Normal"), 
+             size = 4, alpha = 0.8) +
+  
+  # Segmenti verticali (rug-style)
+  geom_segment(data = subset(df_outliers_time, Type != "Normal"),
+               aes(x = Date, xend = Date, y = 0.5, yend = Type), 
+               linetype = "dotted", alpha = 0.5) +
+  
+  # --- ASSE X: MESI IN INGLESE ---
+  scale_x_date(
+    date_breaks = "1 month", 
+    date_labels = "%b %Y" # Es: "Jan 2024"
+  ) +
+  
+  # Palette colori
+  scale_color_manual(values = c("Normal" = "gray95", 
+                                "Shape Outlier" = "orange", 
+                                "Magnitude Outlier" = "firebrick", 
+                                "Both (Shape & Magnitude)" = "purple")) +
+  
+  # Titoli Tradotti
+  labs(title = "Temporal Distribution of Functional Outliers",
+       subtitle = "Comparison between Shape and Magnitude anomalies",
+       x = "Month", 
+       y = "Outlier Type", 
+       color = "Category") +
+  
+  theme_minimal() +
+  theme(
+    legend.position = "bottom",
+    panel.grid.minor = element_blank(),
+    axis.text.x = element_text(angle = 45, hjust = 1) # Rotazione per leggibilità
+  )
+
+
+# 1. Filtriamo i dati per escludere i giorni "Normal"
+df_only_outliers <- subset(df_outliers_time, Type != "Normal")
+
+# 2. Plot: Stacked Histogram of Outliers
+ggplot(df_only_outliers, aes(x = Date, fill = Type)) +
+  # Creiamo l'istogramma con barre impilate
+  # binwidth = 30 raggruppa circa per mese
+  geom_histogram(binwidth = 30, position = "stack", alpha = 0.8, color = "white") +
+  
+  # --- ASSE X: MESI IN INGLESE ---
+  scale_x_date(
+    date_breaks = "1 month", 
+    date_labels = "%b %Y"
+  ) +
+  
+  # Palette colori coerente con il Timeline Plot
+  scale_fill_manual(values = c("Shape Outlier" = "orange", 
+                               "Magnitude Outlier" = "firebrick", 
+                               "Both (Shape & Magnitude)" = "purple")) +
+  
+  # Titoli Tradotti in Inglese
+  labs(title = "Monthly Frequency of Functional Outliers",
+       subtitle = "Stacked counts of Shape and Magnitude anomalies",
+       x = "Month", 
+       y = "Outlier Count", 
+       fill = "Category") +
+  
+  theme_minimal() +
+  theme(
+    legend.position = "bottom",
+    panel.grid.minor = element_blank(),
+    axis.text.x = element_text(angle = 45, hjust = 1) # Ruotiamo le etichette per leggibilità
+  )
 # ------------------------------------------------------------------------------
 # 3. Split e FPCA Rigorosa (SOLO su Training)
 # ------------------------------------------------------------------------------

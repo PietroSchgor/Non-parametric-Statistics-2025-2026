@@ -65,7 +65,29 @@ dataset_ordinato_distanza <- read.csv("dataset/bordo_con_distanze.csv")
 dataset_ordinato_distanza <- dataset_ordinato_distanza %>%
   filter (Lat >= 45)
 x <- sort(unique(dataset_ordinato_distanza$distanza_cumulata))
-plot(dataset_ordinato_distanza$Lon, dataset_ordinato_distanza$Lat)
+
+pos_mete <- read.csv("dataset/dataset_mete_approssimate.csv")
+# 1. Definiamo la lista delle località più rinomate
+mete_top <- c("Grado", "Lignano Sabbiadoro", "Bibione", "Caorle", 
+              "Lido di Jesolo", "Lido di Venezia" )
+# 2. Creiamo il dataset filtrato
+# Assumendo che il tuo dataset si chiami 'pos_mete'
+pos_mete <- pos_mete[pos_mete$Localita_Originale %in% mete_top, ]
+# Plot dello sfondo
+plot(dataset_ordinato_distanza$Lon, dataset_ordinato_distanza$Lat, col = "black", pch = 20)
+
+# Aggiungi i punti
+points(pos_mete$Lon, pos_mete$Lat, col = "red", pch = 16)
+
+# Aggiungi i NOMI
+text(pos_mete$Lon, pos_mete$Lat, 
+     labels = pos_mete$Localita_Originale, 
+     pos = 3,      # Posizione: 1=sotto, 2=sinistra, 3=sopra, 4=destra
+     cex = 0.7,    # Dimensione del testo
+     col = "red" 
+     )  # Colore del testo# Visualizing Raw Data
+
+
 # Visualizing Raw Data
 n_giorni <- nrow(matrice_finale_Po)
 colori <- viridis(n_giorni)
@@ -75,6 +97,15 @@ matplot(x, t(matrice_finale_Po),
         type = 'l', lty = 1, lwd = 2, col = colori,
         xlab = "Cumulative Distance", ylab = "Chl Content",
         main = "Raw Daily Chlorophyll Profiles")
+
+#3. Aggiungi linee verticali tratteggiate per ogni località
+abline(v = pos_mete$distanza_cumulata, col = "gray80", lty = 2)
+
+# 4. Aggiungi i nomi delle località sull'asse X
+# las = 2 ruota il testo di 90 gradi per evitare sovrapposizioni
+axis(1, at = pos_mete$distanza_cumulata, 
+     labels = pos_mete$Localita_Originale, 
+     las = 2, cex.axis = 0.7, col.ticks = "red")
 
 # Add a color bar for days
 image.plot(legend.only = TRUE, 
@@ -110,14 +141,26 @@ rug(tutti_i_knots, col = "red", lwd = 1.5)
 par(mfrow = c(1, 1))
 
 # ------------------------------------------------------------------------------
-# 3. Functional Principal Component Analysis (FPCA)
+# 3. Split e FPCA Rigorosa (SOLO su Training)
 # ------------------------------------------------------------------------------
+n_tot <- dim(matrice_finale_Po)[1]
+n_val <- 7
+n_train <- n_tot - n_val
 
+# Split dei dati funzionali
+train_fd <- chl_fd[1:n_train]
+val_fd   <- chl_fd[(n_train + 1):n_tot]
+
+# FPCA calcolata SOLO sul Training
 n_comp <- 4
-chl_pca <- pca.fd(chl_fd, nharm = n_comp)
+chl_pca_train_train <- pca.fd(train_fd, nharm = n_comp)
+
+# Estrarre gli score per il training
+train_set <- chl_pca_train_train$scores[, 1:n_comp]
+
 
 # Explained Variance Analysis
-var_spiegata <- chl_pca$varprop
+var_spiegata <- chl_pca_train_train$varprop
 names(var_spiegata) <- paste0("PC", 1:n_comp)
 print("Explained Variance by PC:")
 print(round(var_spiegata, 3))
@@ -131,33 +174,68 @@ cumsum(var_spiegata)
 
 # Visualizziamo le prime 4 componenti principali
 par(mfrow = c(2, 2))
-plot(chl_pca, nx = 100, cex.main = 0.8) 
+plot(chl_pca_train_train, nx = 100, cex.main = 0.8) 
 par(mfrow = c(1, 1))
 
+# 1. Estrarre i coefficienti
+coef_val   <- val_fd$coefs                # Dimensione: [nbasis x 7]
+coef_media <- chl_pca_train_train$meanfd$coefs  # Dimensione: [nbasis x 1]
+
+# 2. Sottrarre la media da ogni colonna del validation
+# Usiamo sweep() o una semplice sottrazione (R gestisce il riciclo se le righe coincidono)
+coef_val_centered <- sweep(coef_val, 1, coef_media, "-")
+
+# 3. Creare l'oggetto fd centrato (stessa base del training)
+val_centered_fd <- fd(coef_val_centered, basis_obj)
+
+# 4. Ora la proiezione funzionerà perfettamente
+# Calcoliamo i "veri" score proiettando sulle armoniche (eigenfunctions)
+val_scores_reali <- inprod(val_centered_fd, chl_pca_train_train$harmonics)
+
+# Verifica: deve essere una matrice 7 x 4
+print(dim(val_scores_reali))
 
 # ------------------------------------------------------------------------------
-# 4. Forecasting Preparation
+# 4. Funzione di Supporto per Ricostruzione Curve Predette
 # ------------------------------------------------------------------------------
-
-# Extract PC scores for modeling
-scores_all <- chl_pca$scores[, 1:4]
-n_tot <- nrow(scores_all)
-n_val <- 7  # Validation horizon (1 week)
-
-# Split into Training and Validation sets
-train_set <- scores_all[1:(n_tot - n_val), ]
-val_set   <- scores_all[(n_tot - n_val + 1):n_tot, ]
-
-# Define ground truth curves for error calculation
-curve_reali <- chl_fd[(n_tot - n_val + 1):n_tot]
-
-# Function to calculate functional RMSE day by day
-calcola_rmse_giornaliero <- function(curve_reali, curve_predette) {
-  diff_fd <- curve_reali - curve_predette
-  integrali_quadrati <- diag(inprod(diff_fd, diff_fd))
-  return(sqrt(integrali_quadrati))
+# Questa funzione usa la media e le armoniche del TRAIN per ricostruire
+ricostruisci_curve <- function(scores_predetti, pca_obj) {
+  # scores_predetti deve essere (n_val x n_comp)
+  # armoniche: (nbasis x n_comp)
+  coef_reconstr <- pca_obj$harmonics$coefs[, 1:n_comp] %*% t(scores_predetti)
+  # Aggiungiamo la media del training
+  curve_fd <- fd(coef_reconstr + as.vector(pca_obj$meanfd$coefs), pca_obj$harmonics$basis)
+  return(curve_fd)
 }
 
+# 1. Ricostruzione delle curve di validation usando gli score REALI
+# Usiamo la funzione che abbiamo definito prima
+curve_val_ricostruite <- ricostruisci_curve(val_scores_reali, chl_pca_train_train)
+
+# 2. Plot di confronto
+# Impostiamo un layout con più riquadri per vedere i singoli giorni
+par(mfrow = c(4, 2), mar = c(4, 4, 2, 1)) 
+
+for (i in 1:n_val) {
+  # Calcoliamo il range per avere assi coerenti
+  y_lim <- range(c(eval.fd(x, val_fd[i]), eval.fd(x, curve_val_ricostruite[i])))
+  
+  # Plot della curva reale (nera, continua)
+  plot(val_fd[i], col = "black", lwd = 2, lty = 1, ylim = y_lim,
+       main = paste("Day", i, "(Validation)"),
+       xlab = "Distance", ylab = "Chl")
+  
+  # Sovrapponiamo la ricostruzione FPCA (rossa, tratteggiata)
+  plot(curve_val_ricostruite[i], col = "red", lwd = 2, lty = 2, add = TRUE)
+  
+  if(i == 1) {
+    legend("topright", legend = c("True", "FPCA reconstruction"),
+           col = c("black", "red"), lty = c(1, 2), bty = "n", cex = 0.8)
+  }
+}
+
+# Ripristina layout singolo
+par(mfrow = c(1, 1))
 # ------------------------------------------------------------------------------
 # 5. Model: Vector Autoregression (VAR)
 # ------------------------------------------------------------------------------
@@ -170,10 +248,16 @@ scores_var <- sapply(pred_var_obj$fcst, function(x) x[, "fcst"])
 if(nrow(scores_var) != n_val) scores_var <- t(scores_var)
 
 # Reconstruct functional profiles
-coef_pred_var <- chl_pca$harmonics$coefs[, 1:4] %*% t(scores_var)
-curve_var_fd <- fd(coef_pred_var + as.vector(chl_pca$meanfd$coefs), basis_obj)
+coef_pred_var <- chl_pca_train$harmonics$coefs[, 1:4] %*% t(scores_var)
+curve_var_fd <- fd(coef_pred_var + as.vector(chl_pca_train$meanfd$coefs), basis_obj)
 
-err_var <- calcola_rmse_giornaliero(curve_reali, curve_var_fd)
+# Function to calculate functional RMSE day by day
+calcola_rmse_giornaliero <- function(curve_reali, curve_predette) {
+  diff_fd <- curve_reali - curve_predette
+  integrali_quadrati <- diag(inprod(diff_fd, diff_fd))
+  return(sqrt(integrali_quadrati))
+}
+err_var <- calcola_rmse_giornaliero(val_fd, curve_var_fd)
 
 # ------------------------------------------------------------------------------
 # 6. Model: SARIMA (Univariate)
@@ -185,10 +269,10 @@ for(i in 1:4) {
   scores_sarima[, i] <- as.numeric(forecast(fit_sarima, h = n_val)$mean)
 }
 
-coef_pred_sarima <- chl_pca$harmonics$coefs[, 1:4] %*% t(scores_sarima)
-curve_sarima_fd <- fd(coef_pred_sarima + as.vector(chl_pca$meanfd$coefs), basis_obj)
+coef_pred_sarima <- chl_pca_train$harmonics$coefs[, 1:4] %*% t(scores_sarima)
+curve_sarima_fd <- fd(coef_pred_sarima + as.vector(chl_pca_train$meanfd$coefs), basis_obj)
 
-err_sarima <- calcola_rmse_giornaliero(curve_reali, curve_sarima_fd)
+err_sarima <- calcola_rmse_giornaliero(val_fd, curve_sarima_fd)
 
 # ------------------------------------------------------------------------------
 # 7. Model: Multivariate XGBoost (Recursive)
@@ -216,8 +300,8 @@ for (s in 1:n_val) {
   curr_hist <- rbind(curr_hist[-1, ], step_p)
 }
 
-curve_xgb_fd <- fd((chl_pca$harmonics$coefs[, 1:4] %*% t(scores_xgb)) + as.vector(chl_pca$meanfd$coefs), basis_obj)
-err_xgb <- calcola_rmse_giornaliero(curve_reali, curve_xgb_fd)
+curve_xgb_fd <- fd((chl_pca_train$harmonics$coefs[, 1:4] %*% t(scores_xgb)) + as.vector(chl_pca_train$meanfd$coefs), basis_obj)
+err_xgb <- calcola_rmse_giornaliero(val_fd, curve_xgb_fd)
 
 # ------------------------------------------------------------------------------
 # 8. Model: Vector Error Correction Model (VECM)
@@ -231,8 +315,8 @@ summary(johan_test)
 fit_vecm <- VECM(train_set, lag = 7, r = 3, estim = "ML")
 scores_vecm <- as.matrix(predict(fit_vecm, n.ahead = n_val))
 
-curve_vecm_fd <- fd((chl_pca$harmonics$coefs[, 1:4] %*% t(scores_vecm)) + as.vector(chl_pca$meanfd$coefs), basis_obj)
-err_vecm <- calcola_rmse_giornaliero(curve_reali, curve_vecm_fd)
+curve_vecm_fd <- fd((chl_pca_train$harmonics$coefs[, 1:4] %*% t(scores_vecm)) + as.vector(chl_pca_train$meanfd$coefs), basis_obj)
+err_vecm <- calcola_rmse_giornaliero(val_fd, curve_vecm_fd)
 
 # ------------------------------------------------------------------------------
 # 9. Error Comparison and Visualization
@@ -255,7 +339,7 @@ legend("topleft", legend = c("VAR", "SARIMA", "XGBoost", "VECM"),
 # Final step visualization (VAR)
 par(mfrow = c(4, 2))
 for (i in 1:n_val) {
-  plot(chl_fd[n_tot - n_val + i], col = "black", lwd = 2, ylim = c(0, 5),
+  plot(val_fd[i], col = "black", lwd = 2, ylim = c(0, 3),
        main = paste("VAR Validation: Day", i))
   plot(curve_var_fd[i], col = "red", lty = 2, lwd = 2, add = TRUE)
 }
@@ -265,7 +349,7 @@ par(mfrow = c(1, 1))
 # Final step visualization (XGB)
 par(mfrow = c(4, 2))
 for (i in 1:n_val) {
-  plot(chl_fd[n_tot - n_val + i], col = "black", lwd = 2, ylim = c(0, 3),
+  plot(val_fd[i], col = "black", lwd = 2, ylim = c(0, 3),
        main = paste("XGB Validation: Day", i))
   plot(curve_xgb_fd[i], col = "darkgreen", lty = 2, lwd = 2, add = TRUE)
 }
@@ -274,7 +358,7 @@ par(mfrow = c(1, 1))
 # Final step visualization (VECM)
 par(mfrow = c(4, 2))
 for (i in 1:n_val) {
-  plot(chl_fd[n_tot - n_val + i], col = "black", lwd = 2, ylim = c(0, 3),
+  plot(val_fd[i], col = "black", lwd = 2, ylim = c(0, 3),
        main = paste("VECM Validation: Day", i))
   plot(curve_vecm_fd[i], col = "darkblue", lty = 2, lwd = 2, add = TRUE)
 }
@@ -320,10 +404,10 @@ scores_var <- sapply(pred_var_obj$fcst, function(x) x[, "fcst"])
 if(nrow(scores_var) != n_val) scores_var <- t(scores_var)
 
 # Reconstruct functional profiles
-coef_pred_var <- chl_pca$harmonics$coefs[, 1:4] %*% t(scores_var)
-curve_var_fd <- fd(coef_pred_var + as.vector(chl_pca$meanfd$coefs), basis_obj)
+coef_pred_var <- chl_pca_train$harmonics$coefs[, 1:4] %*% t(scores_var)
+curve_var_fd <- fd(coef_pred_var + as.vector(chl_pca_train$meanfd$coefs), basis_obj)
 
-err_var <- calcola_rmse_giornaliero(curve_reali, curve_var_fd)
+err_var <- calcola_rmse_giornaliero(val_fd, curve_var_fd)
 
 # Test sui residui del modello vincente
 var_check <- serial.test(fit_var_train, lags.pt = 12, type = "PT.asymptotic")
@@ -362,7 +446,7 @@ text(1:length(err_var), err_var, labels = round(err_var, 4), pos = 3, cex = 0.8,
 # Final step visualization (VAR)
 par(mfrow = c(4, 2))
 for (i in 1:n_val) {
-  plot(chl_fd[n_tot - n_val + i], col = "black", lwd = 2, ylim = c(0, 5),
+  plot(val_fd[i], col = "black", lwd = 2, ylim = c(0, 5),
        main = paste("VAR Validation: Day", i))
   plot(curve_var_fd[i], col = "red", lty = 2, lwd = 2, add = TRUE)
 }

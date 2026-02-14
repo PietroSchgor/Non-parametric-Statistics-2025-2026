@@ -221,7 +221,7 @@ for (t in 1:n_val) {
   # B. Construct Band for Day t
   pred_t <- eval_pred[, t]
   aci_upper[, t] <- pred_t + k_t
-  aci_lower[, t] <- pred_t - k_t
+  aci_lower[, t] <- pmax(0,pred_t - k_t)
   
   # C. Check Coverage (Did the real curve stay inside the band?)
   real_t <- eval_reali[, t]
@@ -249,4 +249,9 @@ for(t in 1:n_val){
 
 
 
+```
+
+```{r adaptive conformal prediction on log_trasformed data, echo=TRUE}
+## NOTE: WE NEED TO LOG TRANSFORM DATA BEFORE PCA TO GET MEANINGFUL SCORES FOR CONFORMAL PREDICTION
+# ----> THEN WE RETRANFORM BACK TO ORIGINAL SCALE FOR PLOTTING
 ```

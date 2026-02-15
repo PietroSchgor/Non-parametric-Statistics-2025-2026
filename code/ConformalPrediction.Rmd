@@ -1,0 +1,257 @@
+---
+title: "ConformalPrediction_space"
+author: "Tito"
+date: "2026-02-14"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+```{r libraries, results = "hide"}
+library(dplyr) # Tidy data
+library(tidyverse) # Tidy data
+library(roahd) # Functional data analysis
+library(fda) # Functional data analysis
+library(conformalInference.fd) # Conformal prediction (functional)
+library(vars) # VAR
+
+library(viridis) # Color palette
+```
+
+```{r dataset}
+data = read.csv("../dataset/dataset_clorofilla_filtrata_3anni.csv")
+
+# Round coordinates to 3 decimal places to match with the distance dataset
+data$Lon = round(data$Lon, 3)
+data$Lat = round(data$Lat, 3)
+
+# Dataset of the distances
+ordered_distances = read.csv("../dataset/bordo_con_distanze.csv")
+data_pos = data %>%
+  inner_join(ordered_distances, by = c("Lat", "Lon"))
+
+# Final dataset
+chl_pos = data_pos %>%
+  dplyr::select(Date, Lat, Lon, Chl, distanza_cumulata)
+
+chl_pos$Date = as.Date(chl_pos$Date)
+
+# Space grid
+x = sort(unique(chl_pos$distanza_cumulata))
+
+# Parameters
+n_days = length(unique(chl_pos$Date))
+```
+
+```{r data exploration}
+head(data_pos)
+dim(data_pos)
+summary(data_pos)
+
+table(data_pos$Pos_ID)
+```
+
+```{r points in space}
+plot(chl_pos$Lon, chl_pos$Lat, col = "blue", pch = 16, cex = 0.5,
+     xlab = "Longitude", ylab = "Latitude", main = "Spatial Distribution of Points")
+```
+
+```{r data matrix setup}
+data_matrix_df = chl_pos %>%
+  dplyr::select(Date, distanza_cumulata, Chl) %>%
+  arrange(Date, distanza_cumulata) %>%
+  pivot_wider(names_from = distanza_cumulata, values_from = Chl)
+
+data_matrix = as.matrix(data_matrix_df[,-1])
+
+sum(is.na(data.matrix))
+
+dim(data_matrix)
+```
+
+```{r functional data setup}
+colours = viridis(n_days)
+
+# Define B-spline Basis
+basis = create.bspline.basis(
+  rangeval = range(x), 
+  breaks = x,           # Placing knots at real data points
+  norder = 4            # Cubic splines
+)
+
+# Convert discrete data to functional objects
+chl_fd <- Data2fd(argvals = x, y = t(data_matrix), basisobj = basis)
+
+# Comparison between Raw Data and FDA Smoothing
+par(mfrow = c(1, 2))
+matplot(x, t(data_matrix), type = "l", lty = 1, lwd = 1, col = colours,
+        xlab = "Distance", ylab = "Chl", main = "Original Data (Raw)")
+plot(chl_fd, col = colours, lty = 1, lwd = 2,
+     xlab = "Distance", ylab = "Chl", main = "FDA Smooth (B-splines)")
+# Highlight knots on the plot
+knots = c(basis$rangeval[1], basis$params, basis$rangeval[2])
+abline(v = knots, col = "gray90", lty = 3)
+rug(knots, col = "red", lwd = 1.5)
+par(mfrow = c(1, 1))
+```
+
+```{r prediction setup, echo=TRUE}
+n_comp = 4
+chl_pca = pca.fd(chl_fd, nharm = n_comp)
+
+scores_data = chl_pca$scores
+
+n_tot <- nrow(scores_data)
+n_val <- 7  # Validation horizon (1 week)
+
+# Split into Training and Validation sets
+train_set <- scores_data[1:(n_tot - n_val), ]
+val_set   <- scores_data[(n_tot - n_val + 1):n_tot, ]
+
+# Define ground truth curves for error calculation
+curve_reali <- chl_fd[(n_tot - n_val + 1):n_tot]
+
+# Function to calculate functional RMSE day by day
+compute.daily.rmse <- function(curve_reali, curve_predette) {
+  diff_fd <- curve_reali - curve_predette
+  integrali_quadrati <- diag(inprod(diff_fd, diff_fd))
+  return(sqrt(integrali_quadrati))
+}
+```
+
+```{r VAR prediction, echo=TRUE}
+fit_var_train <- VAR(train_set, p = 7, type = "both")
+pred_var_obj <- predict(fit_var_train, n.ahead = n_val)
+
+# Extract predicted scores
+scores_var <- sapply(pred_var_obj$fcst, function(x) x[, "fcst"])
+if(nrow(scores_var) != n_val) scores_var <- t(scores_var)
+
+# Reconstruct functional profiles
+coef_pred_var <- chl_pca$harmonics$coefs[, 1:4] %*% t(scores_var)
+curve_var_fd <- fd(coef_pred_var + as.vector(chl_pca$meanfd$coefs), basis)
+
+err_var <- compute.daily.rmse(curve_reali, curve_var_fd)
+```
+
+```{r prediction plot, echo=TRUE}
+#par(mfrow = c(4, 2))
+for (i in 1:n_val) {
+  plot(chl_fd[n_tot - n_val + i], col = "black", lwd = 2, ylim = c(0, 5),
+       main = paste("VECM Validation: Day", i))
+  plot(curve_var_fd[i], col = "red", lty = 2, lwd = 2, add = TRUE)
+}
+par(mfrow = c(1, 1))
+
+plot(curve_var_fd)
+```
+
+```{r conformal prediction, echo=TRUE}
+curve_reali <- chl_fd[(n_tot - n_val + 1):n_tot]
+
+# 1. Setup Parameters
+alpha <- 0.05
+n_cal <- n_val  # Using the 7-day validation set as calibration
+
+# 2. Evaluate curves on a fine grid for comparison
+grid_x <- seq(min(x), max(x), length.out = 200)
+eval_reali <- eval.fd(grid_x, curve_reali)      # True curves (Validation)
+eval_pred  <- eval.fd(grid_x, curve_var_fd)     # Predicted curves (VAR)
+
+# 3. Calculate Non-conformity Scores (Max Absolute Deviation)
+# We calculate the max difference across the grid for each of the 7 days
+res_matrix <- abs(eval_reali - eval_pred)
+scores <- apply(res_matrix, 2, max) 
+
+# 4. Calculate the Conformal Quantile (k_alpha)
+# This is the "radius" of our prediction band
+prob_val <- min((1 - alpha) * (1 + 1/n_cal), 1)
+k_alpha <- quantile(scores, probs = prob_val, type = 1)
+
+# 5. Construct Bands for a specific day (e.g., Day 1 of the forecast)
+day_to_plot <- 1
+pred_vals <- eval_pred[, day_to_plot]
+lower_band <- pred_vals - k_alpha
+upper_band <- pred_vals + k_alpha
+
+# 6. Visualization
+plot(grid_x, pred_vals, type = "l", lwd = 2, col = "blue", 
+     ylim = c(min(lower_band) - 0.5, max(upper_band) + 0.5),
+     xlab = "Distance", ylab = "Chl",
+     main = paste("VAR Forecast Day", day_to_plot, "with 95% Conformal Band"))
+
+# Add the uncertainty band
+polygon(c(grid_x, rev(grid_x)), c(upper_band, rev(lower_band)), 
+        col = rgb(1, 0, 0, 0.2), border = NA)
+
+# Add the predicted line and the true observed line for comparison
+lines(grid_x, pred_vals, col = "blue", lwd = 2)
+lines(grid_x, eval_reali[, day_to_plot], col = "black", lty = 2)
+legend("topright", legend=c("Predicted", "Actual", "95% Band"), 
+       col=c("blue", "black", "red"), lty=c(1, 2, 1), pch=c(NA, NA, 15))
+
+
+```
+
+```{r adaptive conformal prediction, echo=TRUE}
+# 1. ACI Parameters
+gamma <- 0.05       # Learning rate (step size for adaptation)
+alpha_target <- 0.05 # Target error rate (95% coverage)
+alpha_t <- alpha_target # Initial alpha
+
+# We need a set of initial "calibration" scores to pick a starting k_alpha
+# Let's use the first day of validation or a small historical buffer
+initial_scores <- scores # From your previous static calculation
+
+# 2. Containers for results
+aci_upper <- matrix(0, nrow = length(grid_x), ncol = n_val)
+aci_lower <- matrix(0, nrow = length(grid_x), ncol = n_val)
+k_values <- numeric(n_val)
+
+# 3. Sequential Update Loop
+for (t in 1:n_val) {
+  # A. Calculate k_alpha based on current alpha_t
+  # Ensure alpha_t stays in a valid range (0, 1)
+  prob_val <- 1 - max(0, min(alpha_t, 1))
+  k_t <- quantile(initial_scores, probs = prob_val, type = 1)
+  k_values[t] <- k_t
+  
+  # B. Construct Band for Day t
+  pred_t <- eval_pred[, t]
+  aci_upper[, t] <- pred_t + k_t
+  aci_lower[, t] <- pmax(0,pred_t - k_t)
+  
+  # C. Check Coverage (Did the real curve stay inside the band?)
+  real_t <- eval_reali[, t]
+  # We check if the MAX error of the day exceeded our threshold k_t
+  error_occured <- if (max(abs(real_t - pred_t)) > k_t) 1 else 0
+  
+  # D. Update alpha_t for the NEXT day (The "Adaptive" step)
+  alpha_t <- alpha_t + gamma * (alpha_target - error_occured)
+}
+
+for(t in 1:n_val){
+  plot(grid_x, eval_pred[, t], type = "l", col = "blue", lwd = 2,
+     ylim = range(c(aci_lower[, t], aci_upper[, t])),
+     main = paste("ACI Forecast: Day", t),
+     xlab = "Distance", ylab = "Chl")
+
+  polygon(c(grid_x, rev(grid_x)), 
+          c(aci_upper[, t], rev(aci_lower[, t])), 
+          col = rgb(0, 1, 0, 0.2), border = NA)
+
+  lines(grid_x, eval_reali[, t], col = "black", lty = 2)
+  legend("topright", legend=c("Predicted", "Actual", "ACI Band"), 
+        col=c("blue", "black", "green"), lty=c(1, 2, 1), pch=c(NA, NA, 15))
+}
+
+
+
+```
+
+```{r adaptive conformal prediction on log_trasformed data, echo=TRUE}
+## NOTE: WE NEED TO LOG TRANSFORM DATA BEFORE PCA TO GET MEANINGFUL SCORES FOR CONFORMAL PREDICTION
+# ----> THEN WE RETRANFORM BACK TO ORIGINAL SCALE FOR PLOTTING
+```

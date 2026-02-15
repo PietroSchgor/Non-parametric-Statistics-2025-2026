@@ -198,7 +198,7 @@ axis(1, at = pos_mete$distanza_cumulata,
 
 # --- SECONDO GRAFICO: Dati Smussati (FDA) ---
 plot(chl_fd, col = colori, lty = 1, lwd = 2,
-     xlab = "", ylab = "Chlorophyll [mg/m^3]", main = "FDA Smooth (B-splines)",
+     xlab = "", ylab = "Chlorophyll [mg/m^3]", main = "Smoothing (B-splines)",
      xaxt = "n") # Nasconde l'asse numerico
 
 # Evidenzia i knots (i nodi della spline)
@@ -235,7 +235,7 @@ par(mfrow = c(1, 1), mar = c(5, 4, 4, 2) + 0.1)}
   
   # --- SECONDO GRAFICO: Dati Smussati (FDA) ---
   plot(chl_fd, col = colori, lty = 1, lwd = 2,
-       xlab = "", ylab = "Chlorophyll [mg/m^3]", main = "FDA Smooth (B-splines)",
+       xlab = "", ylab = "Chlorophyll [mg/m^3]", main = "Smoothed (B-splines)",
        xaxt = "n") 
   
   tutti_i_knots <- c(basis_obj$rangeval[1], basis_obj$params, basis_obj$rangeval[2])
@@ -525,18 +525,22 @@ date_disponibili <- as.Date(rownames(matrice_finale_Po))
 start_val <- which(date_disponibili == as.Date("2024-05-01")) # Esempio
 # Scegli il giorno di inizio della validazione (es. giorno 100)
 # Se vuoi l'ultima settimana, lasceresti: start_val <- n_tot - n_val + 1
+n_pca <- 360
 n_val     <- 7
 
 # Indici per il training (tutto ciò che viene PRIMA della settimana scelta)
 # Nota: in una serie temporale, di solito non si usa ciò che viene "dopo" per predire il "prima"
-indici_train <- 1:(start_val - 1)
+indici_pca <- (start_val - n_pca -1) :(start_val-1)
+indici_train <- 1:(start_val  - 1)
 indici_val   <- start_val:(start_val + n_val - 1)
 
 # Split dei coefficienti
+coef_pca <- chl_fd$coefs[, indici_pca]
 coef_train <- chl_fd$coefs[, indici_train]
 coef_val   <- chl_fd$coefs[, indici_val]
 
 # Ricostruzione oggetti FD
+pca_fd <- fd(coef_pca, basis_obj)
 train_fd <- fd(coef_train, basis_obj)
 val_fd   <- fd(coef_val, basis_obj)
 
@@ -546,10 +550,10 @@ val_fd$fdnames$reps   <- chl_fd$fdnames$reps[indici_val]
 
 # FPCA calcolata SOLO sul Training
 n_comp <- 4
-chl_pca_train <- pca.fd(train_fd, nharm = n_comp)
+chl_pca_train <- pca.fd(pca_fd, nharm = n_comp)
 
-# Estrarre gli score per il training
-train_set <- chl_pca_train$scores[, 1:n_comp]
+# # Estrarre gli score per il training
+# train_set <- chl_pca_train$scores[, 1:n_comp]
 
 
 # Explained Variance Analysis
@@ -648,20 +652,21 @@ par(mfrow = c(1, 1))
   par(mfrow = c(1, 1), mar = c(5, 4, 4, 2) + 0.1)}
 
 # 1. Estrarre i coefficienti
-coef_val   <- val_fd$coefs                # Dimensione: [nbasis x 7]
+coef_val   <- val_fd$coefs
+coef_train <- train_fd$coefs# Dimensione: [nbasis x 7]
 coef_media <- chl_pca_train$meanfd$coefs  # Dimensione: [nbasis x 1]
 
 # 2. Sottrarre la media da ogni colonna del validation
 # Usiamo sweep() o una semplice sottrazione (R gestisce il riciclo se le righe coincidono)
 coef_val_centered <- sweep(coef_val, 1, coef_media, "-")
-
+coef_train_centered <- sweep(coef_train, 1, coef_media, "-")
 # 3. Creare l'oggetto fd centrato (stessa base del training)
 val_centered_fd <- fd(coef_val_centered, basis_obj)
-
+train_centered_fd <- fd(coef_val_centered, basis_obj)
 # 4. Ora la proiezione funzionerà perfettamente
 # Calcoliamo i "veri" score proiettando sulle armoniche (eigenfunctions)
 val_scores_reali <- inprod(val_centered_fd, chl_pca_train$harmonics)
-
+train_set <- inprod(train_centered_fd, chl_pca_train$harmonics)
 # Verifica: deve essere una matrice 7 x 4
 print(dim(val_scores_reali))
 
@@ -992,16 +997,28 @@ barplot(mean_rmse$Avg_Functional_RMSE,
 # par(mfrow = c(1, 1))
 
 # Diagnostica del Modello Vincitore (VECM) ####
-
+summary(fit_vecm)
 # 1. Estrazione dei residui del VECM
 residui_vecm <- resid(fit_vecm)
-
+plot(residui_vecm)
 # 2. Portmanteau Test (Test di Ljung-Box multivariato) per i residui del VECM
 # Il pacchetto vars ha una funzione specifica serial.test, ma il VECM va prima convertito in VAR
 vecm_as_var <- vec2var(johan_test, r = 3)
+vecm_as_var
 vecm_check <- serial.test(vecm_as_var, lags.pt = 12, type = "PT.asymptotic")
 print(vecm_check)
 
+
+library(urca)
+
+# Run the Johansen Test
+# type="trace" is the standard test.
+# K=7 corresponds to your 'lag=7' in the VECM (Note: ca.jo uses K as lag order in levels, so it might differ by 1 depending on definition, but start with the same number).
+# ecdet="const" assumes an intercept in the cointegration (standard).
+johansen_test <- ca.jo(train_set, type = "trace", K = 3, ecdet = "const")
+
+# View results
+summary(johansen_test)
 # 3. ACF Plot for the residuals of each Component (VECM)
 par(mfrow = c(2, 2), mar = c(4, 4, 3, 1))
 for(i in 1:4) {

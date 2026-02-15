@@ -2,12 +2,13 @@ rm(list=ls())
 graphics.off()
 cat("\014")
 
-setwd("~/uni/2025-2026/non param/progetto/clorofilla/Non-parametric-Statistics-2025-2026")
-
+#setwd("~/uni/2025-2026/non param/progetto/clorofilla/Non-parametric-Statistics-2025-2026")
+setwd("~/Documents/Nonparametric/Project/Non-parametric-Statistics-2025-2026")
 
 
 # 1. Caricamento e Preparazione Dati -------------------------------------------
 library(tidyverse)
+library(ggrepel)
 
 df <- read.csv("dataset/dataset_MERGIATO")
 
@@ -53,14 +54,16 @@ bordo_df_clean <- bordo_df %>%
   filter(Lat >= 44.10, Lon <= 13.90) %>%
   anti_join(bordo_croatia, by = c("Lat", "Lon"))
   
-
+bordo_df_clean <- bordo_df %>%
+  filter(Lat >= 45.00, Lon <= 13.90) %>%
+  anti_join(bordo_croatia, by = c("Lat", "Lon"))
 
 
 # 1. Disegna il confine completo
 plot(bordo_df_clean, col = "blue") # "l" sta per linea
 
 point0 <- bordo_df_clean %>%
-  filter(Lon <= 12.586, Lat <= 44.110)
+  filter(Lon > 12.4, Lat <= 45.10)
 point0 <- point0[1,]
 # 2. Aggiungi il primo punto sopra il grafico esistente
 points(point0, col = "red", pch = 19, cex = 1.5)
@@ -167,14 +170,76 @@ plot_distanza <- ggplot(dataset_ordinato_distanza, aes(x = 1:nrow(dataset_ordina
 
 # Visualizza i grafici
 print(plot_mappa)
-print(plot_distanza)
+#print(plot_distanza)
+{
+  pos_mete <- read.csv("dataset/dataset_mete_approssimate.csv")
+  # 1. Definiamo la lista delle località più rinomate
+  mete_top <- c("Grado", "Lignano Sabbiadoro", "Bibione", "Caorle", 
+                "Lido di Jesolo", "Lido di Venezia", "Sottomarina (Chioggia)")
+  # 2. Creiamo il dataset filtrato
+  # Assumendo che il tuo dataset si chiami 'pos_mete'
+  pos_mete <- pos_mete[pos_mete$Localita_Originale %in% mete_top, ]
+  pos_mete$Localita_Originale[pos_mete$Localita_Originale == "Sottomarina (Chioggia)"] <- "Sottomarina"
+}
+{library(ggplot2)
+  library(viridis)
+  # Installa questo pacchetto se non ce l'hai: install.packages("ggrepel")
+  library(ggrepel) 
+  
+  # 1. Grafico del percorso spaziale (Coastal Linearization Map)
+  plot_mappa <- ggplot(dataset_ordinato_distanza, aes(x = Lon, y = Lat)) +
+    
+    # Disegna la linea principale
+    geom_path(aes(color = distanza_cumulata), 
+              linewidth = 1.2, 
+              arrow = arrow(length = unit(0.3, "cm"), type = "closed")) + 
+    
+    # Aggiunge i punti base
+    geom_point(alpha = 0.5) +
+    
+    # Evidenzia il punto di partenza
+    geom_point(data = dataset_ordinato_distanza[1, ], 
+               color = "red", size = 5, shape = 18) +
+    
+    # =========================================================================
+  # IL TRUCCO: Aggiungiamo i nomi delle città leggendoli da pos_mete
+  # =========================================================================
+  geom_label_repel(data = pos_mete, 
+                   aes(x = Lon, y = Lat, label = Localita_Originale),
+                   size = 3.5,               # Grandezza del testo
+                   fontface = "bold",        # Grassetto per renderle leggibili
+                   fill = "white",           # Sfondo bianco per l'etichetta
+                   box.padding = 0.6,        # Distanza dell'etichetta dal punto
+                   point.padding = 0.3,      # Evita di coprire il punto stesso
+                   segment.color = "grey30", # Colore della linetta di collegamento
+                   min.segment.length = 0) + # Forza a disegnare sempre la linetta
+    
+    # Scala colori
+    scale_color_viridis_c(option = "turbo", name = "Cumulative\nDistance") +
+    
+    # Temi e layout
+    theme_minimal() +
+    theme(
+      plot.title = element_text(hjust = 0.5, face = "bold", size = 14), 
+      panel.border = element_rect(colour = "black", fill = NA, linewidth = 1), 
+      axis.text = element_text(size = 10),
+      axis.title = element_text(size = 12)
+    ) +
+    
+    # Titoli
+    labs(title = "Spatial Linearization of the Adriatic Coastline",
+         x = "Longitude", 
+         y = "Latitude")
+  
+  # Stampa il grafico
+  print(plot_mappa)}
 
 
 
 # Write CSV ---------------------------------------------------------------
 
 # Se vuoi salvare il risultato in un file CSV:
-write.csv(dataset_ordinato_distanza, "dataset/bordo_con_distanze.csv", row.names = FALSE)
+# write.csv(dataset_ordinato_distanza, "dataset/bordo_con_distanze.csv", row.names = FALSE)
 
 
 # Merge data_weekly -------------------------------------------------------

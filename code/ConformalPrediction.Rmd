@@ -16,6 +16,8 @@ library(roahd) # Functional data analysis
 library(fda) # Functional data analysis
 library(conformalInference.fd) # Conformal prediction (functional)
 library(vars) # VAR
+library(urca) # VECM
+library(tsDyn) # VECM
 
 library(viridis) # Color palette
 ```
@@ -32,14 +34,14 @@ ordered_distances = read.csv("../dataset/bordo_con_distanze.csv")
 data_pos = data %>%
   inner_join(ordered_distances, by = c("Lat", "Lon"))
 
+ordered_distances <- ordered_distances %>%
+  filter (Lat >= 45)
+
 # Final dataset
 chl_pos = data_pos %>%
   dplyr::select(Date, Lat, Lon, Chl, distanza_cumulata)
 
 chl_pos$Date = as.Date(chl_pos$Date)
-
-# Space grid
-x = sort(unique(chl_pos$distanza_cumulata))
 
 # Parameters
 n_days = length(unique(chl_pos$Date))
@@ -64,11 +66,19 @@ data_matrix_df = chl_pos %>%
   arrange(Date, distanza_cumulata) %>%
   pivot_wider(names_from = distanza_cumulata, values_from = Chl)
 
-data_matrix = as.matrix(data_matrix_df[,-1])
+# data_matrix = as.matrix(data_matrix_df[,-1])
+
+
+
+data_matrix_noPo = read.csv("../dataset/matrix_Po_fda_daily.csv", row.names = 1)
+data_matrix = as.matrix(data_matrix_noPo)
 
 sum(is.na(data.matrix))
 
 dim(data_matrix)
+
+# Space grid
+x = sort(unique(ordered_distances$distanza_cumulata))
 ```
 
 ```{r functional data setup}
@@ -98,17 +108,42 @@ par(mfrow = c(1, 1))
 ```
 
 ```{r prediction setup, echo=TRUE}
+
+date_disponibili <- as.Date(rownames(data_matrix))
+start_val <- which(date_disponibili == as.Date("2024-05-01")) # Esempio
+
+n_val = 7
+n_cal = 20
+
+indici_train <- 1:(start_val - 1)
+indici_cal <- start_val:(start_val + n_cal - 1) # Usato per calibrazione (conformal prediction)
+indici_val   <- (start_val + n_cal ):(start_val + n_cal + n_val - 1)
+
+# Split dei coefficienti
+coef_train <- chl_fd$coefs[, indici_train]
+coef_val   <- chl_fd$coefs[, indici_val]
+coef_cal   <- chl_fd$coefs[, indici_cal]
+
+# Ricostruzione oggetti FD
+train_fd <- fd(coef_train, basis)
+val_fd   <- fd(coef_val, basis)
+cal_fd <- fd(coef_cal, basis)
+
+# Aggiorna i metadati (nomi delle date) per non fare confusione nei plot
+train_fd$fdnames$reps <- chl_fd$fdnames$reps[indici_train]
+cal_fd$fdnames$reps <- chl_fd$fdnames$reps[indici_cal]
+val_fd$fdnames$reps   <- chl_fd$fdnames$reps[indici_val]
+#################
 n_comp = 4
-chl_pca = pca.fd(chl_fd, nharm = n_comp)
 
-scores_data = chl_pca$scores
+chl_pca_train <- pca.fd(train_fd, nharm = n_comp)
 
-n_tot <- nrow(scores_data)
-n_val <- 7  # Validation horizon (1 week)
+# Estrarre gli score per il training
+train_set <- chl_pca_train$scores[, 1:n_comp]
 
 # Split into Training and Validation sets
-train_set <- scores_data[1:(n_tot - n_val), ]
-val_set   <- scores_data[(n_tot - n_val + 1):n_tot, ]
+#train_set <- scores_data[1:(n_tot - n_val), ]
+
 
 # Define ground truth curves for error calculation
 curve_reali <- chl_fd[(n_tot - n_val + 1):n_tot]
@@ -121,89 +156,53 @@ compute.daily.rmse <- function(curve_reali, curve_predette) {
 }
 ```
 
-```{r VAR prediction, echo=TRUE}
-fit_var_train <- VAR(train_set, p = 7, type = "both")
-pred_var_obj <- predict(fit_var_train, n.ahead = n_val)
-
+```{r VECM prediction, echo=TRUE}
 # Extract predicted scores
-scores_var <- sapply(pred_var_obj$fcst, function(x) x[, "fcst"])
-if(nrow(scores_var) != n_val) scores_var <- t(scores_var)
+#scores_var <- sapply(pred_var_obj$fcst, function(x) x[, "fcst"])
+#if(nrow(scores_var) != n_val) scores_var <- t(scores_var)
 
 # Reconstruct functional profiles
-coef_pred_var <- chl_pca$harmonics$coefs[, 1:4] %*% t(scores_var)
-curve_var_fd <- fd(coef_pred_var + as.vector(chl_pca$meanfd$coefs), basis)
+scores_vecm_val <- as.matrix(predict(fit_vecm, n.ahead = n_val))
+curve_vecm_val_fd <- fd((chl_pca_train$harmonics$coefs[, 1:4] %*% t(scores_vecm_val)) + 
+                        as.vector(chl_pca_train$meanfd$coefs), basis)
 
-err_var <- compute.daily.rmse(curve_reali, curve_var_fd)
+
+fitted_train_scores <- fitted(fit_vecm) 
+n_fitted <- nrow(fitted_train_scores)
+cal_pred_scores <- fitted_train_scores[(n_fitted - n_cal + 1):n_fitted, ]
+
+curve_cal_pred_fd <- fd((chl_pca_train$harmonics$coefs[, 1:4] %*% t(cal_pred_scores)) + 
+                         as.vector(chl_pca_train$meanfd$coefs), basis)
+
+grid_x <- seq(basis$rangeval[1], basis$rangeval[2], length.out = 200)
+eval_cal_real <- eval.fd(grid_x, cal_fd)           # Actual curves in cal period
+eval_cal_pred <- eval.fd(grid_x, curve_cal_pred_fd) # Predicted curves in cal period
+eval_val_real <- eval.fd(grid_x, val_fd)           # Actual curves in val period
+eval_val_pred <- eval.fd(grid_x, curve_vecm_val_fd) # Predicted curves in val period
+
 ```
 
 ```{r prediction plot, echo=TRUE}
 #par(mfrow = c(4, 2))
 for (i in 1:n_val) {
-  plot(chl_fd[n_tot - n_val + i], col = "black", lwd = 2, ylim = c(0, 5),
+  plot(val_fd[i], col = "black", lwd = 2, ylim = c(0, 5),
        main = paste("VECM Validation: Day", i))
-  plot(curve_var_fd[i], col = "red", lty = 2, lwd = 2, add = TRUE)
+  plot(curve_vecm_fd[i], col = "red", lty = 2, lwd = 2, add = TRUE)
 }
 par(mfrow = c(1, 1))
 
-plot(curve_var_fd)
+plot(curve_vecm_fd)
 ```
 
-```{r conformal prediction, echo=TRUE}
-curve_reali <- chl_fd[(n_tot - n_val + 1):n_tot]
-
-# 1. Setup Parameters
-alpha <- 0.05
-n_cal <- n_val  # Using the 7-day validation set as calibration
-
-# 2. Evaluate curves on a fine grid for comparison
-grid_x <- seq(min(x), max(x), length.out = 200)
-eval_reali <- eval.fd(grid_x, curve_reali)      # True curves (Validation)
-eval_pred  <- eval.fd(grid_x, curve_var_fd)     # Predicted curves (VAR)
-
-# 3. Calculate Non-conformity Scores (Max Absolute Deviation)
-# We calculate the max difference across the grid for each of the 7 days
-res_matrix <- abs(eval_reali - eval_pred)
-scores <- apply(res_matrix, 2, max) 
-
-# 4. Calculate the Conformal Quantile (k_alpha)
-# This is the "radius" of our prediction band
-prob_val <- min((1 - alpha) * (1 + 1/n_cal), 1)
-k_alpha <- quantile(scores, probs = prob_val, type = 1)
-
-# 5. Construct Bands for a specific day (e.g., Day 1 of the forecast)
-day_to_plot <- 1
-pred_vals <- eval_pred[, day_to_plot]
-lower_band <- pred_vals - k_alpha
-upper_band <- pred_vals + k_alpha
-
-# 6. Visualization
-plot(grid_x, pred_vals, type = "l", lwd = 2, col = "blue", 
-     ylim = c(min(lower_band) - 0.5, max(upper_band) + 0.5),
-     xlab = "Distance", ylab = "Chl",
-     main = paste("VAR Forecast Day", day_to_plot, "with 95% Conformal Band"))
-
-# Add the uncertainty band
-polygon(c(grid_x, rev(grid_x)), c(upper_band, rev(lower_band)), 
-        col = rgb(1, 0, 0, 0.2), border = NA)
-
-# Add the predicted line and the true observed line for comparison
-lines(grid_x, pred_vals, col = "blue", lwd = 2)
-lines(grid_x, eval_reali[, day_to_plot], col = "black", lty = 2)
-legend("topright", legend=c("Predicted", "Actual", "95% Band"), 
-       col=c("blue", "black", "red"), lty=c(1, 2, 1), pch=c(NA, NA, 15))
-
-
-```
 
 ```{r adaptive conformal prediction, echo=TRUE}
 # 1. ACI Parameters
-gamma <- 0.05       # Learning rate (step size for adaptation)
+gamma <- 0.01       # Learning rate (step size for adaptation)
 alpha_target <- 0.05 # Target error rate (95% coverage)
 alpha_t <- alpha_target # Initial alpha
 
-# We need a set of initial "calibration" scores to pick a starting k_alpha
-# Let's use the first day of validation or a small historical buffer
-initial_scores <- scores # From your previous static calculation
+res_matrix <- abs(eval_cal_real - eval_cal_pred)
+initial_scores <- apply(res_matrix, 2, max) 
 
 # 2. Containers for results
 aci_upper <- matrix(0, nrow = length(grid_x), ncol = n_val)
@@ -224,17 +223,18 @@ for (t in 1:n_val) {
   aci_lower[, t] <- pmax(0,pred_t - k_t)
   
   # C. Check Coverage (Did the real curve stay inside the band?)
-  real_t <- eval_reali[, t]
+  real_t <- eval_val_real[, t]
   # We check if the MAX error of the day exceeded our threshold k_t
-  error_occured <- if (max(abs(real_t - pred_t)) > k_t) 1 else 0
+  max_err_t <- max(abs(real_t - pred_t))
+  error_occured <- if (max_err_t > k_t) 1 else 0
   
   # D. Update alpha_t for the NEXT day (The "Adaptive" step)
   alpha_t <- alpha_t + gamma * (alpha_target - error_occured)
 }
 
 for(t in 1:n_val){
-  plot(grid_x, eval_pred[, t], type = "l", col = "blue", lwd = 2,
-     ylim = range(c(aci_lower[, t], aci_upper[, t])),
+  plot(grid_x, eval_val_pred[, t], type = "l", col = "blue", lwd = 2,
+     ylim = c(0, max(aci_upper)),
      main = paste("ACI Forecast: Day", t),
      xlab = "Distance", ylab = "Chl")
 
@@ -242,7 +242,7 @@ for(t in 1:n_val){
           c(aci_upper[, t], rev(aci_lower[, t])), 
           col = rgb(0, 1, 0, 0.2), border = NA)
 
-  lines(grid_x, eval_reali[, t], col = "black", lty = 2)
+  lines(grid_x, eval_val_real[, t], col = "black", lty = 2)
   legend("topright", legend=c("Predicted", "Actual", "ACI Band"), 
         col=c("blue", "black", "green"), lty=c(1, 2, 1), pch=c(NA, NA, 15))
 }
@@ -251,7 +251,97 @@ for(t in 1:n_val){
 
 ```
 
-```{r adaptive conformal prediction on log_trasformed data, echo=TRUE}
-## NOTE: WE NEED TO LOG TRANSFORM DATA BEFORE PCA TO GET MEANINGFUL SCORES FOR CONFORMAL PREDICTION
-# ----> THEN WE RETRANFORM BACK TO ORIGINAL SCALE FOR PLOTTING
+```{r ACI on log_trasformed data - preliminaries, echo=TRUE}
+# 1. Define the grid and transform
+grid_x <- seq(basis$rangeval[1], basis$rangeval[2], length.out = 200)
+log_valori <- log(eval.fd(grid_x, chl_fd))
+log_chl_fd <- smooth.basis(grid_x, log_valori, basis)$fd
+
+# 2. Extract scores for the entire period
+log_pca_obj <- pca.fd(log_chl_fd, nharm = n_comp)
+all_scores <- log_pca_obj$scores
+
+# 3. Precise Indexing
+# Let's say: Training -> Calibration -> Validation
+idx_train <- 1:(start_val - 1)
+idx_cal   <- start_val:(start_val + n_cal - 1)
+idx_val   <- (start_val + n_cal):(start_val + n_cal + n_val - 1)
+
+train_scores <- all_scores[idx_train, ]
+cal_scores   <- all_scores[idx_cal, ]   # Ground truth scores for cal
+val_scores   <- all_scores[idx_val, ]   # Ground truth scores for val
+
+# 4. Fit VECM on Training
+log_fit_vecm <- VECM(train_scores, lag = 7, r = 3, estim = "ML")
+
+# 5. Get Predictions for Calibration Period
+# We predict n_cal steps ahead starting from the end of train_scores
+pred_cal_scores <- as.matrix(predict(log_fit_vecm, n.ahead = n_cal))
+
+# 6. Reconstruct Functional Objects for Calibration
+# Use the harmonics and mean from the PCA to turn scores back into curves
+log_curve_cal_pred_fd <- fd((log_pca_obj$harmonics$coefs[, 1:n_comp] %*% t(pred_cal_scores)) + 
+                             as.vector(log_pca_obj$meanfd$coefs), basis)
+
+# 7. Evaluate on grid for the ACI residual matrix
+eval_cal_real <- eval.fd(grid_x, log_chl_fd[idx_cal])
+eval_cal_pred <- eval.fd(grid_x, log_curve_cal_pred_fd)
+
+log_res_matrix <- abs(eval_cal_real - eval_cal_pred) # Dimensions now match!
+```
+
+```{r ACI on log_trasformed data, echo=TRUE}
+alpha_t <- alpha_target # Initial alpha
+
+#log_eval_cal <- eval.fd(grid_x, log_cal_curves)      # Calibration curves
+#log_eval_pred  <- eval.fd(grid_x, log_curve_cal_pred_fd)     # Predicted curves (VAR)
+#log_eval_val <- eval.fd(grid_x, log_val_curves)
+
+# 3. Calculate Non-conformity Scores (Max Absolute Deviation)
+# We calculate the max difference across the grid for each of the 7 days
+#log_res_matrix <- abs(log_eval_cal - log_eval_pred)
+log_initial_scores <- apply(log_res_matrix, 2, max) 
+
+# 2. Containers for results
+log_aci_upper <- matrix(0, nrow = length(grid_x), ncol = n_val)
+log_aci_lower <- matrix(0, nrow = length(grid_x), ncol = n_val)
+log_k_values <- numeric(n_val)
+
+# 3. Sequential Update Loop
+for (t in 1:n_val) {
+  # A. Calculate k_alpha based on current alpha_t
+  # Ensure alpha_t stays in a valid range (0, 1)
+  prob_val <- 1 - max(0.001, min(alpha_t, 0.999)) # AVOID ERRORS
+  k_t <- quantile(log_initial_scores, probs = prob_val, type = 1)
+  log_k_values[t] <- k_t
+  
+  # B. Construct Band for Day t
+  pred_t <- exp(log_eval_pred[, t])
+  log_aci_upper[, t] <- exp(log_eval_pred[, t] + k_t)
+  log_aci_lower[, t] <- exp(log_eval_pred[, t] - k_t)
+  
+  # C. Check Coverage (Did the real curve stay inside the band?)
+  log_real_t = eval.fd(grid_x, log_val_curves[, t])
+  max_log_err <- max(abs(log_real_t - log_eval_pred[, t]))
+  # We check if the MAX error of the day exceeded our threshold k_t
+  error_occured <- if (max_log_err > k_t) 1 else 0
+  
+  # D. Update alpha_t for the NEXT day (The "Adaptive" step)
+  alpha_t <- alpha_t + gamma * (alpha_target - error_occured)
+}
+
+for(t in 1:n_val){
+  plot(grid_x, exp(log_eval_pred[, t]), type = "l", col = "blue", lwd = 2,
+     ylim = range(c(0,6)),
+     main = paste("log-ACI Forecast: Day", t),
+     xlab = "Distance", ylab = "Chl")
+
+  polygon(c(grid_x, rev(grid_x)), 
+          c(log_aci_upper[, t], rev(log_aci_lower[, t])), 
+          col = rgb(0, 1, 0, 0.2), border = NA)
+
+  lines(grid_x, eval_val[,t], col = "black", lty = 2)
+  legend("topright", legend=c("Predicted", "Actual", "ACI Band"), 
+        col=c("blue", "black", "green"), lty=c(1, 2, 1), pch=c(NA, NA, 15))
+}
 ```

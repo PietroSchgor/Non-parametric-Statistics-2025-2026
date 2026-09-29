@@ -1,0 +1,100 @@
+\documentclass[11pt]{article}
+
+% -----------------------------
+%       LANGUAGE & GEOMETRY
+% -----------------------------
+\usepackage[english]{babel}
+\usepackage[a4paper,margin=1in]{geometry}
+
+% -----------------------------
+%       FONTS & TYPOGRAPHY
+% -----------------------------
+\usepackage{mathpazo}      % Font Palatino
+\usepackage{microtype}     % Migliora estetica testo
+\usepackage{setspace}
+\onehalfspacing
+
+% -----------------------------
+%       MATH PACKAGES
+% -----------------------------
+\usepackage{amsmath, amssymb, amsthm, bm}
+
+% -----------------------------
+%     FIGURES & TABLES
+% -----------------------------
+\usepackage{graphicx}
+\usepackage{booktabs}      % Tabelle professionali
+\usepackage{caption}
+\usepackage{subcaption}
+\usepackage{float}
+
+% -----------------------------
+%       REFERENCES
+% -----------------------------
+\usepackage[dvipsnames, table, x11names]{xcolor}
+\usepackage[colorlinks=true, allcolors=blue!50!black]{hyperref}
+\usepackage{cleveref}
+
+% -----------------------------
+%       HEADER & FOOTER
+% -----------------------------
+\usepackage{fancyhdr}
+\pagestyle{fancy}
+\fancyhf{}
+\fancyhead[L]{\textit{Team 7}}
+\fancyhead[R]{\textit{Mucilage Forecast for North Adriatic Sea Coast}}
+\fancyfoot[C]{\thepage}
+
+% -----------------------------
+%       THEOREM ENVIRONMENTS
+% -----------------------------
+\newtheorem{theorem}{Theorem}
+\newtheorem{lemma}{Lemma}
+\newtheorem{definition}{Definition}
+
+% -----------------------------
+%     BAYESIAN CUSTOM COMMANDS
+% -----------------------------
+% Prior, likelihood, posterior
+\newcommand{\prior}{p(\theta)}
+\newcommand{\likelihood}{p(y \mid \theta)}
+\newcommand{\posterior}{p(\theta \mid y)}
+\newcommand{\evidence}{p(y)}
+
+% Expectation and variance
+\newcommand{\E}{\mathbb{E}}
+\newcommand{\Var}{\mathbb{V}\mathrm{ar}}
+\newcommand{\Cov}{\mathbb{C}\mathrm{ov}}
+
+% Bayesian inference symbols
+\newcommand{\given}{\,|\,}  
+\newcommand{\iid}{\overset{\text{iid}}{\sim}}
+
+% Densità note
+\newcommand{\normal}{\mathcal{N}}
+\newcommand{\wishart}{\mathcal{W}}
+\newcommand{\invwishart}{\mathcal{IW}}
+
+% Useful vectors/matrices
+\newcommand{\D}{\mathcal{D}}
+\newcommand{\x}{\mathbf{x}}
+\newcommand{\y}{\mathbf{y}}
+\newcommand{\U}{\mathbf{U}}
+\newcommand{\bOmega}{\bm{\Omega}}
+\newcommand{\bbeta}{\bm{\beta}}
+\newcommand{\btheta}{\bm{\theta}}
+
+% Independence symbol
+\newcommand{\ci}{\perp\!\!\!\!\perp}
+
+% --- Title and authors ---
+\title{\huge\textbf{Mucilage Forecast 
+\\for North Adriatic Sea Coast} 
+\vspace{0.5em}\\ \large A Nonparametric Statistics Project}
+\author{
+{\Large \textbf{Team Members}} \\[0.3em]
+Tito Maraz Galassi - Leo Marcello Poli - Pietro Filippo Schgor \\[1.5em]
+}
+
+
+\date{}

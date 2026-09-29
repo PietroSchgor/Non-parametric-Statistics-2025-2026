@@ -1,7 +1,7 @@
 rm(list=ls()); graphics.off(); cat("\014")
 # Setup Workspace
-#setwd("~/uni/2025-2026/non param/progetto/clorofilla/Non-parametric-Statistics-2025-2026")
-setwd("~/Documents/Nonparametric/Project/Non-parametric-Statistics-2025-2026")
+setwd("~/uni/2025-2026/non param/progetto/clorofilla/Non-parametric-Statistics-2025-2026")
+#setwd("~/Documents/Nonparametric/Project/Non-parametric-Statistics-2025-2026")
 
 {# Libraries
 library(tidyverse)

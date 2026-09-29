@@ -1,7 +1,7 @@
 rm(list=ls()); graphics.off(); cat("\014")
 # Setup Workspace
-#setwd("~/uni/2025-2026/non param/progetto/clorofilla/Non-parametric-Statistics-2025-2026")
-setwd("~/Documents/Nonparametric/Project/Non-parametric-Statistics-2025-2026")
+setwd("~/uni/2025-2026/non param/progetto/clorofilla/Non-parametric-Statistics-2025-2026")
+#setwd("~/Documents/Nonparametric/Project/Non-parametric-Statistics-2025-2026")
 
 {# Libraries
 library(tidyverse)
@@ -171,13 +171,61 @@ image.plot(legend.only = TRUE,
 
 #### Functional Data Analysis (Smoothing) ####
 
-# Define B-spline Basis
+#### Functional Data Analysis (Rigorous Smoothing) ####
+
+# 1. Define the "Rich" Basis (Knots at every data point)
+# We keep your original choice because P-splines require a dense basis
 basis_obj <- create.bspline.basis(
   rangeval = range(x), 
-  breaks = x,           # Placing knots at real data points
+  breaks = x,           # One knot per data point
   norder = 4            # Cubic splines
 )
 
+# 2. OPTIMIZATION: Find the best Lambda using GCV
+# We test a range of smoothing parameters from 10^-4 to 10^4
+loglam_values <- seq(-4, -2, 0.25) 
+gcv_scores <- rep(NA, length(loglam_values))
+
+cat("Optimizing smoothing parameter (GCV)... \n")
+
+for (i in 1:length(loglam_values)) {
+  # Create a parameter object with the current lambda
+  # Lfdobj = 2 means we penalize the 2nd derivative (curvature)
+  fd_par_temp <- fdPar(basis_obj, Lfdobj = 2, lambda = 10^loglam_values[i])
+  
+  # Smooth the data and extract the GCV score
+  # We transpose the matrix because smooth.basis expects (locations x days)
+  smooth_temp <- smooth.basis(x, t(matrice_finale_Po), fd_par_temp)
+  
+  # Sum GCV scores across all days to find the best global lambda
+  gcv_scores[i] <- sum(smooth_temp$gcv) 
+}
+
+# 3. Select the best Lambda
+best_loglam <- loglam_values[which.min(gcv_scores)]
+best_lambda <- 10^best_loglam
+
+cat("Optimal Lambda found:", best_lambda, "(Log10:", best_loglam, ")\n")
+
+# Plot GCV to confirm the minimum (Optional but recommended for reports)
+plot(loglam_values, gcv_scores, type='b', pch=19, 
+     xlab="Log10(Lambda)", ylab="Total GCV Score", 
+     main="Smoothing Parameter Optimization")
+abline(v = best_loglam, col="red", lty=2)
+
+# 4. FINAL SMOOTHING (Apply the optimal penalty)
+# Create the final parameter object
+final_fdPar <- fdPar(basis_obj, Lfdobj = 2, lambda = best_lambda)
+
+# Apply smoothing
+chl_smooth_obj <- smooth.basis(x, t(matrice_finale_Po), final_fdPar)
+
+# Extract the Functional Data Object (this replaces your old 'chl_fd')
+chl_fd <- chl_smooth_obj$fd
+
+# Verify the fit
+plot(chl_fd[1], main = "Smoothed Curve vs Raw Data (Day 1)")
+points(x, matrice_finale_Po[1,], col="red", pch=19, cex=0.5)
 # Convert discrete data to functional objects
 chl_fd <- Data2fd(argvals = x, y = t(matrice_finale_Po), basisobj = basis_obj)
 

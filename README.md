@@ -9,12 +9,9 @@ This project aims to develop a data-driven predictive tool to provide reliable s
   - `dati_costa.R`: Handles data preprocessing, boundary extraction, and spatial linearization of the coastline.
   - `fda_coastline_NO_PO_PCA_AGGIUSTATA.R`: The main script for Functional Data Analysis, FPCA dimensionality reduction, and Time-Series forecasting.
   - `ConformalPrediction.Rmd` (and its output `ConformalPrediction.html`): R Markdown notebook dedicated to Uncertainty Quantification via Adaptive Conformal Inference (ACI).
-- **`dataset/`**: Folder designated for the raw data extracted from the Copernicus Marine Service (ignored in version control).
 - **`images/`**: Charts, diagrams, and visualizations generated during the various phases of the analysis.
 - **`Report Latex/`**: LaTeX sources containing the final report and formal project details (`main.tex`).
 - **`final presentation.pdf`**: Slide deck offering a high-level, visual summary of the project's methodology and results.
-- **`da consegnare/`**: Final material organized for submission (ignored in version control).
-*Note: The `dataset/` and `da consegnare/` folders are excluded from Git tracking via `.gitignore` to avoid uploading excessively large files or temporary submission outputs.*
 
 ## 🔬 Methodology and Models
 

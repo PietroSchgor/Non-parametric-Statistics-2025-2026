@@ -1,7 +1,7 @@
 # 🌊 Chlorophyll Forecasting in the Northern Adriatic Sea
 **Non-parametric Statistics 2025-2026 Project**
 
-This project (fictitiously commissioned by *Meteo.Adriatico*) aims to develop a data-driven predictive tool to provide reliable short-term forecasts (up to 7 days) regarding water transparency and the risk of algal/mucilage aggregation along the Northern Adriatic coast. The target variable used to estimate algal biomass is **Chlorophyll-a** concentration ($mg/m^3$).
+This project aims to develop a data-driven predictive tool to provide reliable short-term forecasts (up to 7 days) regarding water transparency and the risk of algal/mucilage aggregation along the Northern Adriatic coast. The target variable used to estimate algal biomass is **Chlorophyll-a** concentration ($mg/m^3$).
 
 ## 📁 Repository Structure
 

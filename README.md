@@ -27,6 +27,8 @@ The 2D geometry of the Northern Adriatic coast was transformed into a 1D spatial
 ### 2. Functional Outlier Detection
 To identify extreme algal bloom events and analyze their temporal frequency, the project implements two anomaly detection techniques: the **Functional Boxplot** for global magnitude anomalies (extreme chlorophyll levels across the entire coast) and the **Outliergram** for morphological shape anomalies (localized spikes diverging from the expected spatial gradient).
 
+![Outliergram](images/OUTLIERGRAM.jpeg)
+
 ### 3. Dimensionality Reduction (FPCA)
 To make forecasting computationally efficient, the continuous spatial profiles were compressed using **Functional Principal Component Analysis (FPCA)**. The analysis shows that the first 4 Principal Components account for approximately 96% of the total variance, allowing us to accurately reconstruct the behavior of the entire coast.
 
@@ -40,3 +42,7 @@ The **VECM (Vector Error Correction Model)** emerged as the best-performing mode
 
 ### 5. Uncertainty Quantification (Conformal Prediction)
 Point forecasts were enriched with tolerance bands derived through **Adaptive Conformal Inference (ACI)** in the logarithmic domain. This non-parametric approach provides a rigorous "worst-case scenario" for algal risk (with 95% statistical reliability), yielding physically sound lower bounds (strictly positive) and adaptive bands that scale with the magnitude of the bloom.
+
+![Conformal Prediction 1](images/conformal_1.png)
+
+![Conformal Prediction 2](images/conformal_2.jpg)

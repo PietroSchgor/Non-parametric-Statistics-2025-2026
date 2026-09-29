@@ -20,29 +20,30 @@ The project tackles the complex challenge of marine spatiotemporal forecasting b
 ### 1. Functional Data Engineering
 The 2D geometry of the Northern Adriatic coast was transformed into a 1D spatial domain (representing cumulative distance). We used **B-splines with Roughness Penalty** to extract continuous functional profiles from discrete satellite and oceanographic measurements, effectively filtering out noise.
 
-![Coast Linearization](images/Coast%20Linearization.jpeg)
+<img src="images/Coast%20Linearization.jpeg" alt="Coast Linearization" width="600">
 
-![Raw vs Smoothed](images/RAW%20VS%20SMOOTHED.jpeg)
+<img src="images/RAW%20VS%20SMOOTHED.jpeg" alt="Raw vs Smoothed" width="600">
 
 ### 2. Functional Outlier Detection
 To identify extreme algal bloom events and analyze their temporal frequency, the project implements two anomaly detection techniques: the **Functional Boxplot** for global magnitude anomalies (extreme chlorophyll levels across the entire coast) and the **Outliergram** for morphological shape anomalies (localized spikes diverging from the expected spatial gradient).
 
-![Outliergram](images/OUTLIERGRAM.jpeg)
+<img src="images/OUTLIERGRAM.jpeg" alt="Outliergram" width="600">
 
 ### 3. Dimensionality Reduction (FPCA)
 To make forecasting computationally efficient, the continuous spatial profiles were compressed using **Functional Principal Component Analysis (FPCA)**. The analysis shows that the first 4 Principal Components account for approximately 96% of the total variance, allowing us to accurately reconstruct the behavior of the entire coast.
 
-![PCs Visualization](images/PCs%20VISUALIZATION.jpeg)
+<img src="images/PCs%20VISUALIZATION.jpeg" alt="PCs Visualization" width="600">
 
 ### 4. Forecasting and Model Comparison
 Using the principal component scores, we tested and compared several time-series forecasting strategies: **VAR**, **VECM**, **XGBoost**, and **SARIMA**. 
 The **VECM (Vector Error Correction Model)** emerged as the best-performing model (RMSE $\approx 0.22$). Tests demonstrated that the chlorophyll distribution dynamics share long-term stochastic trends, and the VECM successfully maintains the physical consistency of the North-South gradient throughout the entire 7-day window.
 
-![VECM Validation](images/VECM%20validation.jpeg)
+<img src="images/VECM%20validation.jpeg" alt="VECM Validation" width="600">
 
 ### 5. Uncertainty Quantification (Conformal Prediction)
 Point forecasts were enriched with tolerance bands derived through **Adaptive Conformal Inference (ACI)** in the logarithmic domain. This non-parametric approach provides a rigorous "worst-case scenario" for algal risk (with 95% statistical reliability), yielding physically sound lower bounds (strictly positive) and adaptive bands that scale with the magnitude of the bloom.
 
-![Conformal Prediction 1](images/conformal_1.png)
+<img src="images/conformal_1.png" alt="Conformal Prediction 1" width="600">
 
-![Conformal Prediction 2](images/conformal_2.jpg)
+<img src="images/conformal_2.jpg" alt="Conformal Prediction 2" width="600">
+
